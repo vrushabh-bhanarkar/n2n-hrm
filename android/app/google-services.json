@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "248475494509",
+    "firebase_url": "https://n2nhrm-91599-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "n2nhrm-91599",
+    "storage_bucket": "n2nhrm-91599.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:248475494509:android:946b7aa2dec956681bb764",
+        "android_client_info": {
+          "package_name": "com.n2nhrm.apk"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBHe0qMplmqT_zG_TFzTinlIBez3Gw2VfM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

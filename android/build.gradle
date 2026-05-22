@@ -1,0 +1,46 @@
+buildscript {
+    ext.kotlin_version = '2.1.0'
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${kotlin_version}"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.buildDir = '../build'
+subprojects {
+    project.buildDir = "${rootProject.buildDir}/${project.name}"
+}
+subprojects {
+    project.evaluationDependsOn(':app')
+}
+
+subprojects { subproject ->
+    // Use plugin hook to set a fallback namespace for library modules
+    subproject.plugins.withId('com.android.library') {
+        def androidExt = subproject.extensions.findByName('android')
+        if (androidExt != null) {
+            try {
+                if (!androidExt.hasProperty('namespace') || androidExt.namespace == null || androidExt.namespace.toString().trim().isEmpty()) {
+                    def fallbackNamespace = subproject.group ? "${subproject.group}.${subproject.name}" : "com.n2nhrm.${subproject.name}"
+                    androidExt.namespace = fallbackNamespace
+                }
+            } catch (Exception ignored) {
+                // ignore any evaluation timing exceptions
+            }
+        }
+    }
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.buildDir
+}

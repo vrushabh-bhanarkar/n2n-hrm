@@ -1,0 +1,147 @@
+{
+  "users": {
+    "john.doe": {
+      "id": 1,
+      "name": "John Doe",
+      "username": "john.doe",
+      "email": "john.doe@company.com",
+      "phone": "+1234567890",
+      "department": "Engineering",
+      "position": "Software Developer",
+      "avatar": "https://via.placeholder.com/150",
+      "isActive": true,
+      "createdAt": "2025-09-16T10:00:00Z"
+    },
+    "jane.smith": {
+      "id": 2,
+      "name": "Jane Smith",
+      "username": "jane.smith",
+      "email": "jane.smith@company.com",
+      "phone": "+1234567891",
+      "department": "HR",
+      "position": "HR Manager",
+      "avatar": "https://via.placeholder.com/150",
+      "isActive": true,
+      "createdAt": "2025-09-16T10:00:00Z"
+    },
+    "mike.johnson": {
+      "id": 3,
+      "name": "Mike Johnson",
+      "username": "mike.johnson",
+      "email": "mike.johnson@company.com",
+      "phone": "+1234567892",
+      "department": "Engineering",
+      "position": "Senior Developer",
+      "avatar": "https://via.placeholder.com/150",
+      "isActive": true,
+      "createdAt": "2025-09-16T10:00:00Z"
+    }
+  },
+  "conversations": {
+    "jane.smithjohn.doe": {
+      "id": "jane.smithjohn.doe",
+      "user1": "jane.smith",
+      "user2": "john.doe",
+      "lastMessage": "Hey, how's the project going?",
+      "lastMessageTime": "2025-09-16T10:30:00Z",
+      "createdAt": "2025-09-16T10:00:00Z"
+    },
+    "john.doemike.johnson": {
+      "id": "john.doemike.johnson",
+      "user1": "john.doe",
+      "user2": "mike.johnson",
+      "lastMessage": "Let's review the code together",
+      "lastMessageTime": "2025-09-16T10:35:00Z",
+      "createdAt": "2025-09-16T10:00:00Z"
+    }
+  },
+  "messages": {
+    "message_1": {
+      "id": "jane.smithjohn.doe",
+      "message": "SGV5LCBob3cncyB0aGUgcHJvamVjdCBnb2luZz8=",
+      "sender": "jane.smith",
+      "receiver": "john.doe",
+      "date": "2025-09-16T10:25:00Z",
+      "isRead": false
+    },
+    "message_2": {
+      "id": "jane.smithjohn.doe",
+      "message": "SXQncyBnb2luZyB3ZWxsLCB0aGFua3MgZm9yIGFza2luZyE=",
+      "sender": "john.doe",
+      "receiver": "jane.smith",
+      "date": "2025-09-16T10:27:00Z",
+      "isRead": false
+    },
+    "message_3": {
+      "id": "john.doemike.johnson",
+      "message": "TGV0J3MgcmV2aWV3IHRoZSBjb2RlIHRvZ2V0aGVy",
+      "sender": "john.doe",
+      "receiver": "mike.johnson",
+      "date": "2025-09-16T10:29:00Z",
+      "isRead": false
+    }
+  },
+  "attendance": {
+    "attendance_20250916_1": {
+      "userId": 1,
+      "username": "john.doe",
+      "date": "2025-09-16",
+      "checkIn": "2025-09-16T02:00:00Z",
+      "checkOut": "2025-09-16T09:00:00Z",
+      "workingHours": 7.0,
+      "status": "present",
+      "location": "Office",
+      "notes": "Regular working day"
+    },
+    "attendance_20250916_2": {
+      "userId": 2,
+      "username": "jane.smith",
+      "date": "2025-09-16",
+      "checkIn": "2025-09-16T01:45:00Z",
+      "checkOut": "2025-09-16T09:30:00Z",
+      "workingHours": 7.25,
+      "status": "present",
+      "location": "Office",
+      "notes": "Productive day"
+    },
+    "attendance_20250916_3": {
+      "userId": 3,
+      "username": "mike.johnson",
+      "date": "2025-09-16",
+      "checkIn": "2025-09-16T02:15:00Z",
+      "status": "present",
+      "location": "Office",
+      "notes": "Still working"
+    }
+  },
+  "projects": {
+    "mobile-app-dev": {
+      "id": 1,
+      "name": "Mobile App Development",
+      "slug": "mobile-app-dev",
+      "description": "Developing a new mobile application for HR management",
+      "status": "in_progress",
+      "priority": "high",
+      "startDate": "2025-08-17T00:00:00Z",
+      "endDate": "2025-11-15T00:00:00Z",
+      "progress": 65.0,
+      "teamMembers": ["john.doe", "mike.johnson"],
+      "teamLeaders": ["jane.smith"],
+      "createdAt": "2025-08-17T00:00:00Z"
+    },
+    "db-optimization": {
+      "id": 2,
+      "name": "Database Optimization",
+      "slug": "db-optimization",
+      "description": "Optimizing database queries and improving performance",
+      "status": "planning",
+      "priority": "medium",
+      "startDate": "2025-09-23T00:00:00Z",
+      "endDate": "2025-10-31T00:00:00Z",
+      "progress": 10.0,
+      "teamMembers": ["mike.johnson"],
+      "teamLeaders": ["john.doe"],
+      "createdAt": "2025-09-16T00:00:00Z"
+    }
+  }
+}
