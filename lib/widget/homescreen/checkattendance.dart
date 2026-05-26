@@ -757,6 +757,12 @@ class CheckAttendanceState extends State<CheckAttendance> {
                   onPressed: _breakRequestDialogVisible
                       ? null
                       : () {
+                          if (!isAttendanceActive) {
+                            showToast(
+                              'You are not checked in yet. Please check in before requesting a break.',
+                            );
+                            return;
+                          }
                           _breakRequestDialogDismissed = false;
                           _showBreakRequestDialog();
                         },

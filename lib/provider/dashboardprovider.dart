@@ -359,26 +359,39 @@ class DashboardProvider with ChangeNotifier {
         award = null;
       }
 
-      DateTime startTime = DateFormat("hh:mm a")
-          .parse(dashboardResponse.data.officeTime.startTime);
-      DateTime endTime = DateFormat("hh:mm a")
-          .parse(dashboardResponse.data.officeTime.endTime);
+      final startTimeText =
+          dashboardResponse.data.officeTime.startTime?.toString().trim() ?? '';
+      final endTimeText =
+          dashboardResponse.data.officeTime.endTime?.toString().trim() ?? '';
 
-      try {
-        AwesomeNotifications().cancelAllSchedules();
-      } catch (e) {
-        print('❌ Failed to cancel scheduled notifications: $e');
-      }
+      if (startTimeText.isEmpty || endTimeText.isEmpty) {
+        print(
+            '⚠️ Skipping notification scheduling because office time is null/empty');
+      } else {
+        final DateTime? startTime = _parseOfficeTime(startTimeText);
+        final DateTime? endTime = _parseOfficeTime(endTimeText);
 
-      for (var shift in dashboardResponse.data.shift_dates) {
-        scheduleNewNotification(
-            shift,
-            "Please check in on time ⏱️⌛️",
-            startTime.hour,
-            startTime.minute,
-            "Almost done with your shift 😄⌛️ Remember to checkout ⏱️",
-            endTime.hour,
-            endTime.minute);
+        if (startTime == null || endTime == null) {
+          print(
+              '⚠️ Skipping notification scheduling because office time could not be parsed');
+        } else {
+          try {
+            AwesomeNotifications().cancelAllSchedules();
+          } catch (e) {
+            print('❌ Failed to cancel scheduled notifications: $e');
+          }
+
+          for (var shift in dashboardResponse.data.shift_dates) {
+            scheduleNewNotification(
+                shift,
+                "Please check in on time ⏱️⌛️",
+                startTime.hour,
+                startTime.minute,
+                "Almost done with your shift 😄⌛️ Remember to checkout ⏱️",
+                endTime.hour,
+                endTime.minute);
+          }
+        }
       }
 
       checkAD();
@@ -840,6 +853,14 @@ class DashboardProvider with ChangeNotifier {
     }
   }
 
+  DateTime? _parseOfficeTime(String value) {
+    try {
+      return DateFormat("hh:mm a").parse(value);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> scheduleNewNotification(
       String date,
       String startMessage,
@@ -1095,6 +1116,15 @@ class DashboardProvider with ChangeNotifier {
   }
 
   Future<String> submitBreakRequest(String reason) async {
+    final checkIn = (_attendanceList['check-in'] ?? '-').toString();
+    final checkOut = (_attendanceList['check-out'] ?? '-').toString();
+    final isAttendanceActive = checkIn != '-' && checkOut == '-';
+    final isOnBreak = _attendanceList['is_on_break'] == true;
+
+    if (!isAttendanceActive && !isOnBreak) {
+      throw 'You are not checked in yet. Please check in before requesting a break.';
+    }
+
     Preferences preferences = Preferences();
     final appUrl = await preferences.getAppUrl();
     final uri = Uri.parse(appUrl + Constant.BREAK_REQUEST_URL);

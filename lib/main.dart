@@ -117,6 +117,29 @@ Future<void> _requestNotificationPermissions() async {
   }
 }
 
+/// Request permissions needed for WiFi auto attendance.
+Future<void> _requestWifiAttendancePermissions() async {
+  try {
+    if (!Platform.isAndroid) {
+      return;
+    }
+
+    await Permission.locationWhenInUse.request();
+
+    try {
+      await Permission.nearbyWifiDevices.request();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('⚠️ Nearby WiFi devices permission request failed: $e');
+      }
+    }
+  } catch (e) {
+    if (kDebugMode) {
+      debugPrint('❌ Error requesting WiFi attendance permissions: $e');
+    }
+  }
+}
+
 /// Initialize messaging and notification services (optimized for fast chat notification response)
 Future<void> _initializeMessagingServices() async {
   try {
@@ -137,6 +160,10 @@ Future<void> _initializeMessagingServices() async {
     // Request permissions early (non-blocking for notification processing)
     await _requestNotificationPermissions();
     if (kDebugMode) debugPrint('✅ Notification permissions requested');
+
+    // Request WiFi/location permissions needed for auto attendance.
+    await _requestWifiAttendancePermissions();
+    if (kDebugMode) debugPrint('✅ WiFi attendance permissions requested');
 
     // Initialize non-critical services in background to avoid blocking notification navigation
     // These are deferred to allow chat notifications to navigate immediately

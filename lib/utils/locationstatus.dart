@@ -1,8 +1,10 @@
+import 'dart:async';
+
 import 'package:geolocator/geolocator.dart';
 
 class LocationStatus {
   Future<Position> determinePosition(String workspace) async {
-    try{
+    try {
       bool serviceEnabled;
       LocationPermission permission;
 
@@ -49,31 +51,42 @@ class LocationStatus {
             headingAccuracy: 0);
       }*/
 
-      // When we reach here, permissions are granted and we can
-      // continue accessing the position of the device.
-      if (workspace == "1") {
-        final LocationSettings locationSettings = LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          distanceFilter: 100,
-        );
+      final LocationSettings locationSettings = workspace == "1"
+          ? const LocationSettings(
+              accuracy: LocationAccuracy.medium,
+              distanceFilter: 100,
+            )
+          : const LocationSettings(
+              accuracy: LocationAccuracy.high,
+              timeLimit: Duration(seconds: 10),
+              distanceFilter: 100,
+            );
 
+      try {
         return await Geolocator.getCurrentPosition(
             locationSettings: locationSettings);
-      } else {
-        final LocationSettings locationSettings = LocationSettings(
-          accuracy: LocationAccuracy.high,
-          // Reduce time limit to improve responsiveness when GPS is slow
-          timeLimit: Duration(seconds: 3),
-          distanceFilter: 100,
-        );
+      } on TimeoutException {
+        final lastKnown = await Geolocator.getLastKnownPosition();
+        if (lastKnown != null) {
+          return lastKnown;
+        }
 
-        return await Geolocator.getCurrentPosition(
-            locationSettings: locationSettings);
+        return Future.error(
+            'Location fix timed out. Please wait a moment, then try again after enabling GPS and moving to an open area.');
+      } catch (e) {
+        final lastKnown = await Geolocator.getLastKnownPosition();
+        if (lastKnown != null) {
+          return lastKnown;
+        }
+
+        print(e.toString());
+        return Future.error(
+            'Location can not be found. Please check GPS, permissions, and try again.');
       }
-    }catch(e){
+    } catch (e) {
       print(e.toString());
-      return Future.error('Location can not be found');
+      return Future.error(
+          'Location can not be found. Please check GPS, permissions, and try again.');
     }
   }
-
 }

@@ -120,15 +120,15 @@ Future<List<dynamic>> _fetchAndCacheServerSsids(
     List<dynamic> filtered = [];
     if (payload is Map && payload['data'] is List) {
       filtered = (payload['data'] as List)
-        .where((s) =>
-          s is Map &&
-          (_isRouterActive(s['is_active']) || s['is_active'] == null))
+          .where((s) =>
+              s is Map &&
+              (_isRouterActive(s['is_active']) || s['is_active'] == null))
           .toList();
     } else if (payload is List) {
       filtered = payload
-        .where((s) =>
-          s is Map &&
-          (_isRouterActive(s['is_active']) || s['is_active'] == null))
+          .where((s) =>
+              s is Map &&
+              (_isRouterActive(s['is_active']) || s['is_active'] == null))
           .toList();
     }
 
@@ -188,7 +188,8 @@ String _mapAttendanceStatus(dynamic payload) {
   if (data is! Map) return 'none';
 
   final checkedIn = data['checked_in'] == true || data['check_in_at'] != null;
-  final checkedOut = data['checked_out'] == true || data['check_out_at'] != null;
+  final checkedOut =
+      data['checked_out'] == true || data['check_out_at'] != null;
   final onBreak = data['is_on_break'] == true;
 
   if (checkedIn && !checkedOut) {
@@ -211,15 +212,13 @@ Future<String> _fetchAttendanceStatus(
   try {
     final uri = Uri.parse('$appUrl${Constant.EMPLOYEE_ATTENDANCE_STATUS_URL}');
     log('[WifiAttendance] 🔍 Fetching attendance status from: $uri');
-    final response = await http
-        .get(
-          uri,
-          headers: {
-            'Accept': 'application/json; charset=UTF-8',
-            'Authorization': 'Bearer $token',
-          },
-        )
-        .timeout(const Duration(seconds: 8));
+    final response = await http.get(
+      uri,
+      headers: {
+        'Accept': 'application/json; charset=UTF-8',
+        'Authorization': 'Bearer $token',
+      },
+    ).timeout(const Duration(seconds: 8));
 
     log('[WifiAttendance] 📡 Attendance-status response: ${response.statusCode} - ${response.body.substring(0, 200)}');
     if (response.statusCode != 200 || !_looksLikeJson(response.body)) {
@@ -379,7 +378,8 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
       String currentSsid = '';
       if (hasWifi) {
         try {
-          currentBssid = _normalizeWifiValue(await NetworkInfo().getWifiBSSID());
+          currentBssid =
+              _normalizeWifiValue(await NetworkInfo().getWifiBSSID());
           currentSsid = _normalizeWifiValue(await NetworkInfo().getWifiName());
         } catch (e) {
           log('[WifiAttendance] wifi info read error: $e');
@@ -395,7 +395,8 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
           );
 
       if (onOfficeWifi && currentBssid.isNotEmpty) {
-        await prefs.setString(Preferences.WIFI_LAST_MATCHED_BSSID, currentBssid);
+        await prefs.setString(
+            Preferences.WIFI_LAST_MATCHED_BSSID, currentBssid);
         await prefs.setString(Preferences.WIFI_OFFICE_BSSID, currentBssid);
       }
 
@@ -428,7 +429,8 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
       } else {
         if (attendanceStatus == 'checked_in') {
           lastDisconnectedAt ??= DateTime.now();
-          final disconnectedFor = DateTime.now().difference(lastDisconnectedAt!);
+          final disconnectedFor =
+              DateTime.now().difference(lastDisconnectedAt!);
           log('[WifiAttendance] 📍 Off WiFi + checked_in: disconnected for ${disconnectedFor.inMinutes}min (threshold: 15min)');
           if (disconnectedFor >= const Duration(minutes: 15)) {
             log('[WifiAttendance] ⏱️ 15-minute threshold reached → triggering auto check-out');
@@ -521,7 +523,7 @@ class WifiAttendanceService {
       androidConfiguration: AndroidConfiguration(
         onStart: wifiAttendanceServiceMain,
         autoStart: false,
-        autoStartOnBoot: true,
+        autoStartOnBoot: false,
         isForegroundMode: true,
         notificationChannelId: _kWifiAttendanceChannelId,
         initialNotificationTitle: 'WiFi Attendance Active',

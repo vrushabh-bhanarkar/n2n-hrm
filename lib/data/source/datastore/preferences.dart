@@ -63,6 +63,7 @@ class Preferences with ChangeNotifier {
   // WiFi Break Tracking
   static const String WIFI_FIRST_CHECKIN_TIME = "wifi_first_checkin_time";
   static const String WIFI_LAST_CHECKOUT_TIME = "wifi_last_checkout_time";
+  static const String WIFI_LAST_DISCONNECT_TIME = "wifi_last_disconnect_time";
   static const String WIFI_BREAK_LOG = "wifi_break_log"; // JSON array
   static const String WIFI_BREAK_START_TIME = "wifi_break_start_time";
   static const String WIFI_TOTAL_BREAK_MINUTES = "wifi_total_break_minutes";
@@ -278,8 +279,14 @@ class Preferences with ChangeNotifier {
 
   Future<String> getAttendanceType() async {
     final prefs = await SharedPreferences.getInstance();
+    final attendanceType = prefs.getString(ATTENDANCE_TYPE) ?? "Default";
+    if (attendanceType == "Default" ||
+        attendanceType == "NFC" ||
+        attendanceType == "QR") {
+      return attendanceType;
+    }
 
-    return prefs.getString(ATTENDANCE_TYPE) ?? "Default";
+    return "Default";
   }
 
   Future<bool> getUserAuth() async {

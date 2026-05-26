@@ -29,6 +29,7 @@ class WifiPollingService {
   void startPolling() {
     if (_pollingTimer != null) return;
 
+    _restoreDisconnectTime();
     _pollingTimer = Timer.periodic(_pollingInterval, (_) => _checkAndSync());
     _checkAndSync();
   }
@@ -41,14 +42,16 @@ class WifiPollingService {
   Future<void> _checkAndSync() async {
     try {
       final connectivityResult = await Connectivity().checkConnectivity();
-      final isWifiConnected = connectivityResult.contains(ConnectivityResult.wifi);
+      final isWifiConnected =
+          connectivityResult.contains(ConnectivityResult.wifi);
 
       String currentBssid = '';
       String currentSsid = '';
 
       if (isWifiConnected) {
         try {
-          currentBssid = _normalizeWifiValue(await NetworkInfo().getWifiBSSID());
+          currentBssid =
+              _normalizeWifiValue(await NetworkInfo().getWifiBSSID());
           currentSsid = _normalizeWifiValue(await NetworkInfo().getWifiName());
         } catch (e) {
           log('[WifiPolling] WiFi info read error: $e');
@@ -68,6 +71,7 @@ class WifiPollingService {
       } else if (_lastDisconnectTime != null) {
         await _handleReconnect(attendanceStatus);
         _lastDisconnectTime = null;
+        await preferences.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
       }
 
       await _postWifiStatus(
@@ -198,7 +202,8 @@ class WifiPollingService {
 
   Future<String> _getAttendanceStatus() async {
     try {
-      final uri = Uri.parse('$baseUrl${Constant.EMPLOYEE_ATTENDANCE_STATUS_URL}');
+      final uri =
+          Uri.parse('$baseUrl${Constant.EMPLOYEE_ATTENDANCE_STATUS_URL}');
       final response = await http.get(
         uri,
         headers: {
@@ -212,16 +217,7 @@ class WifiPollingService {
       }
 
       final payload = jsonDecode(response.body);
-      String status = 'none';
-
-      if (payload is Map && payload['data'] is Map) {
-        final data = payload['data'] as Map;
-        if (data['checked_in'] == true || data['check_in_at'] != null) {
-          status = data['is_on_break'] == true ? 'on_break' : 'checked_in';
-        } else if (data['checked_out'] == true || data['check_out_at'] != null) {
-          status = 'checked_out';
-        }
-      }
+      final status = _mapAttendanceStatus(payload);
 
       await preferences.setString(Preferences.WIFI_SESSION_STATUS, status);
       return status;
@@ -238,22 +234,25 @@ class WifiPollingService {
   Future<void> _autoCheckIn() async {
     try {
       final uri = Uri.parse('$baseUrl${Constant.CHECK_IN_URL}');
-      final response = await http.post(
-        uri,
-        headers: {
-          'Accept': 'application/json; charset=UTF-8',
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'latitude': preferences.getDouble('last_latitude') ?? 0.0,
-          'longitude': preferences.getDouble('last_longitude') ?? 0.0,
-          'auto_checkin': true,
-        }),
-      ).timeout(const Duration(seconds: 6));
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Accept': 'application/json; charset=UTF-8',
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'latitude': preferences.getDouble('last_latitude') ?? 0.0,
+              'longitude': preferences.getDouble('last_longitude') ?? 0.0,
+              'auto_checkin': true,
+            }),
+          )
+          .timeout(const Duration(seconds: 6));
 
       if (response.statusCode == 200) {
-        await preferences.setString(Preferences.WIFI_SESSION_STATUS, 'checked_in');
+        await preferences.setString(
+            Preferences.WIFI_SESSION_STATUS, 'checked_in');
         log('[WifiPolling] Auto check-in successful');
       }
     } catch (e) {
@@ -263,25 +262,38 @@ class WifiPollingService {
 
   Future<void> _autoCheckOut() async {
     try {
-      final uri = Uri.parse('$baseUrl${Constant.CHECK_OUT_URL}');
+      final uri = Uri.parse('$baseUrl${Constant.ATTENDANCE_URL}');
+      final routerSsid =
+          preferences.getString(Preferences.WIFI_OFFICE_SSID) ?? '';
+      final routerBssid =
+          preferences.getString(Preferences.WIFI_OFFICE_BSSID) ?? '';
       final response = await http.post(
         uri,
         headers: {
           'Accept': 'application/json; charset=UTF-8',
-          'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({
-          'latitude': preferences.getDouble('last_latitude') ?? 0.0,
-          'longitude': preferences.getDouble('last_longitude') ?? 0.0,
-          'auto_checkout': true,
-          'break_reason': 'WiFi disconnection exceeded threshold',
-        }),
+        body: {
+          'attendance_type': 'wifi',
+          'latitude':
+              (preferences.getDouble('last_latitude') ?? 0.0).toString(),
+          'longitude':
+              (preferences.getDouble('last_longitude') ?? 0.0).toString(),
+          'router_ssid': routerSsid,
+          'router_bssid': routerBssid,
+          'identifier': '',
+          'attendance_status_type': 'checkOut',
+          'note': '',
+        },
       ).timeout(const Duration(seconds: 6));
 
       if (response.statusCode == 200) {
-        await preferences.setString(Preferences.WIFI_SESSION_STATUS, 'checked_out');
+        await preferences.setString(
+            Preferences.WIFI_SESSION_STATUS, 'checked_out');
+        await preferences.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
         log('[WifiPolling] Auto check-out successful');
+      } else {
+        log('[WifiPolling] Auto check-out failed: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
       log('[WifiPolling] Error during auto check-out: $e');
@@ -290,10 +302,23 @@ class WifiPollingService {
 
   Future<void> _handleDisconnect(String attendanceStatus) async {
     try {
+      final persistedDisconnect =
+          preferences.getString(Preferences.WIFI_LAST_DISCONNECT_TIME) ?? '';
+      if (persistedDisconnect.isNotEmpty) {
+        _lastDisconnectTime ??= DateTime.tryParse(persistedDisconnect);
+      }
+
       _lastDisconnectTime ??= DateTime.now();
+      await preferences.setString(
+        Preferences.WIFI_LAST_DISCONNECT_TIME,
+        _lastDisconnectTime!.toIso8601String(),
+      );
+
       final elapsed = DateTime.now().difference(_lastDisconnectTime!);
 
-      if (elapsed >= _breakTimeThreshold && attendanceStatus == 'checked_in') {
+      if (elapsed >= _breakTimeThreshold &&
+          (attendanceStatus == 'checked_in' ||
+              attendanceStatus == 'on_break')) {
         await _autoCheckOut();
       }
     } catch (e) {
@@ -318,19 +343,21 @@ class WifiPollingService {
   }) async {
     try {
       final uri = Uri.parse('$baseUrl${Constant.WIFI_STATUS_URL}');
-      final response = await http.post(
-        uri,
-        headers: {
-          'Accept': 'application/json; charset=UTF-8',
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'status': status,
-          'router_bssid': bssid ?? '',
-          'ssid': ssid ?? '',
-        }),
-      ).timeout(const Duration(seconds: 6));
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Accept': 'application/json; charset=UTF-8',
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'status': status,
+              'router_bssid': bssid ?? '',
+              'ssid': ssid ?? '',
+            }),
+          )
+          .timeout(const Duration(seconds: 6));
 
       if (response.statusCode != 200) {
         log('[WifiPolling] WiFi status post failed: ${response.statusCode}');
@@ -342,7 +369,8 @@ class WifiPollingService {
 
   Future<void> _updateBreakLog(String event) async {
     try {
-      final currentLog = preferences.getString(Preferences.WIFI_BREAK_LOG) ?? '[]';
+      final currentLog =
+          preferences.getString(Preferences.WIFI_BREAK_LOG) ?? '[]';
       final List<dynamic> logs = jsonDecode(currentLog);
 
       logs.add({
@@ -354,5 +382,44 @@ class WifiPollingService {
     } catch (e) {
       log('[WifiPolling] Error updating break log: $e');
     }
+  }
+
+  void _restoreDisconnectTime() {
+    try {
+      final persistedDisconnect =
+          preferences.getString(Preferences.WIFI_LAST_DISCONNECT_TIME) ?? '';
+      if (persistedDisconnect.isNotEmpty) {
+        _lastDisconnectTime = DateTime.tryParse(persistedDisconnect);
+      }
+    } catch (e) {
+      log('[WifiPolling] Error restoring disconnect time: $e');
+    }
+  }
+
+  String _mapAttendanceStatus(dynamic payload) {
+    if (payload is! Map) return 'none';
+
+    final data = payload['data'];
+    if (data is! Map) return 'none';
+
+    final attendance = data['employee_today_attendance'];
+    final attendanceMap = attendance is Map ? attendance : <String, dynamic>{};
+
+    final checkedIn = data['checked_in'] == true ||
+        attendanceMap['check_in_at'] != null ||
+        data['check_in_at'] != null;
+    final checkedOut = data['checked_out'] == true ||
+        attendanceMap['check_out_at'] != null ||
+        data['check_out_at'] != null;
+    final onBreak =
+        data['is_on_break'] == true || attendanceMap['is_on_break'] == true;
+
+    if (checkedIn && !checkedOut) {
+      return onBreak ? 'on_break' : 'checked_in';
+    }
+
+    if (checkedOut) return 'checked_out';
+
+    return 'none';
   }
 }

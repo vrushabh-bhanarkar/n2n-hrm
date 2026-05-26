@@ -121,37 +121,6 @@ class MoreScreenState extends State<MoreScreen> {
                                                 bottomRight:
                                                     Radius.circular(10)))),
                                   ),
-                                  SizedBox(
-                                    width: 10,
-                                  ),
-                                  GestureDetector(
-                                    onTap: () {
-                                      changeAttendanceType("WiFi");
-                                    },
-                                    child: Chip(
-                                        backgroundColor: attendanceType != "WiFi"
-                                            ? HexColor("#000")
-                                            : HexColor("#036eb7"),
-                                        avatar: Icon(
-                                          Icons.wifi,
-                                          color: Colors.white,
-                                        ),
-                                        label: Text(
-                                          'WiFi',
-                                          style: TextStyle(color: Colors.white),
-                                        ),
-                                        elevation: 0,
-                                        shape: RoundedRectangleBorder(
-                                            side: BorderSide(
-                                                color: HexColor("#036eb7")),
-                                            borderRadius: BorderRadius.only(
-                                                topLeft: Radius.circular(10),
-                                                bottomRight:
-                                                    Radius.circular(10)))),
-                                  ),
-                                  SizedBox(
-                                    width: 10,
-                                  ),
                                   Visibility(
                                     visible: features["nfc-qr"] == "1",
                                     child: GestureDetector(
@@ -246,8 +215,8 @@ class MoreScreenState extends State<MoreScreen> {
                                 )),
                             Services(translate('more_screen.team_sheet'),
                                 Icons.group, TeamSheetScreen()),
-                            Services('Group Chat & Messages',
-                                Icons.chat, ConversationListScreen()),
+                            Services('Group Chat & Messages', Icons.chat,
+                                ConversationListScreen()),
                             features["project-management"] != "1"
                                 ? SizedBox.shrink()
                                 : Services(
@@ -269,9 +238,9 @@ class MoreScreenState extends State<MoreScreen> {
                             features["assets"] != "1"
                                 ? SizedBox.shrink()
                                 : Services(
-                                translate('common.assets'),
-                                Icons.production_quantity_limits,
-                                AssetScreen()),
+                                    translate('common.assets'),
+                                    Icons.production_quantity_limits,
+                                    AssetScreen()),
                             /*features["training"] != "1"
                                 ? SizedBox.shrink()
                                 : Services(translate('more_screen.training'),
