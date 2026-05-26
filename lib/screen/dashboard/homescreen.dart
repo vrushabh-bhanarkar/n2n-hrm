@@ -241,6 +241,10 @@ class HomeScreenState extends State<HomeScreen> {
 
       location.update('latitude', (value) => position.latitude);
       location.update('longitude', (value) => position.longitude);
+
+      final sharedPreferences = await SharedPreferences.getInstance();
+      await sharedPreferences.setDouble('last_latitude', position.latitude);
+      await sharedPreferences.setDouble('last_longitude', position.longitude);
     } catch (e) {
       print(e);
       showToast(e.toString());
@@ -463,8 +467,16 @@ class HomeScreenState extends State<HomeScreen> {
         return;
       }
 
-      // Check session status from SharedPreferences (works even if dashboard API fails)
       final sp = await SharedPreferences.getInstance();
+      final wifiAutoEnabled = sp.getBool(Preferences.WIFI_AUTO_ENABLED) ?? true;
+      final attendanceType =
+          _normalizeWifiValue(sp.getString('attendance_type') ?? 'default');
+      if (!wifiAutoEnabled && attendanceType != 'wifi') {
+        log('[HomeScreen] Skipping auto check-in because WiFi auto-attendance is disabled and attendance method is not WiFi');
+        return;
+      }
+
+      // Check session status from SharedPreferences (works even if dashboard API fails)
       final today = DateTime.now();
       final todayStr =
           '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';

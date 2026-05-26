@@ -7,7 +7,6 @@ import 'package:cnattendance/services/wifi_attendance_service.dart';
 import 'package:cnattendance/utils/constant.dart';
 import 'package:cnattendance/utils/fallback_localization.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_translate/flutter_translate.dart';
 import 'package:persistent_bottom_nav_bar_v2/persistent_bottom_nav_bar_v2.dart';
 import 'package:provider/provider.dart';
 import 'package:hexcolor/hexcolor.dart';
@@ -22,12 +21,22 @@ class DashboardScreen extends StatefulWidget {
 class DashboardScreenState extends State<DashboardScreen> {
   bool _hasLoadedUser = false;
 
+  Future<void> _loadAttendanceMethodSafely() async {
+    try {
+      if (!mounted) return;
+      await context.read<PrefProvider>().getAttendanceType();
+    } catch (e) {
+      debugPrint('⚠️ Failed to load attendance method: $e');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
 
     // Ensure WiFi polling is active after login/dashboard navigation.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _loadAttendanceMethodSafely();
       await WifiAttendanceService.startService();
       WifiAttendanceService.forceCheck();
     });

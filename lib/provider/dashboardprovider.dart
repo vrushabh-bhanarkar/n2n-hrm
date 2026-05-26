@@ -648,11 +648,29 @@ class DashboardProvider with ChangeNotifier {
     for (int i = 0; i < serverSsids.length; i++) {
       final item = serverSsids[i];
       if (item is Map) {
-        // Server stores BSSIDs in the 'ssid' field
-        final serverBssid = _normalizeWifiValue(item['ssid']?.toString());
+        final candidates = [
+          item['bssid'],
+          item['router_bssid'],
+          item['router_mac'],
+          item['mac'],
+          item['ssid'],
+          item['name'],
+        ];
 
-        if (bssidNorm.isNotEmpty && serverBssid == bssidNorm) {
-          return serverBssid; // Match found
+        for (final candidate in candidates) {
+          final normalizedCandidate =
+              _normalizeWifiValue(candidate?.toString());
+          if (normalizedCandidate.isEmpty) continue;
+
+          if (bssidNorm.isNotEmpty && normalizedCandidate == bssidNorm) {
+            return normalizedCandidate;
+          }
+
+          if (!_isMacAddress(normalizedCandidate) &&
+              ssidNorm.isNotEmpty &&
+              normalizedCandidate == ssidNorm) {
+            return normalizedCandidate;
+          }
         }
       }
     }
@@ -724,6 +742,9 @@ class DashboardProvider with ChangeNotifier {
 
     final normalizedBssid = _normalizeWifiValue(currentBssid);
     final normalizedSsid = _normalizeWifiValue(currentSsid);
+    debugPrint(
+      '[WiFiAuth] Current WiFi BSSID: ${normalizedBssid.isEmpty ? '(empty)' : normalizedBssid}, SSID: ${normalizedSsid.isEmpty ? '(empty)' : normalizedSsid}',
+    );
     if (normalizedBssid.isEmpty && normalizedSsid.isEmpty) {
       throw 'Unable to read current WiFi details. Please reconnect and try again.';
     }

@@ -124,6 +124,34 @@ class MoreScreenState extends State<MoreScreen> {
                                   SizedBox(
                                     width: 10,
                                   ),
+                                  GestureDetector(
+                                    onTap: () {
+                                      changeAttendanceType("WiFi");
+                                    },
+                                    child: Chip(
+                                        backgroundColor: attendanceType != "WiFi"
+                                            ? HexColor("#000")
+                                            : HexColor("#036eb7"),
+                                        avatar: Icon(
+                                          Icons.wifi,
+                                          color: Colors.white,
+                                        ),
+                                        label: Text(
+                                          'WiFi',
+                                          style: TextStyle(color: Colors.white),
+                                        ),
+                                        elevation: 0,
+                                        shape: RoundedRectangleBorder(
+                                            side: BorderSide(
+                                                color: HexColor("#036eb7")),
+                                            borderRadius: BorderRadius.only(
+                                                topLeft: Radius.circular(10),
+                                                bottomRight:
+                                                    Radius.circular(10)))),
+                                  ),
+                                  SizedBox(
+                                    width: 10,
+                                  ),
                                   Visibility(
                                     visible: features["nfc-qr"] == "1",
                                     child: GestureDetector(

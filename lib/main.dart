@@ -25,8 +25,6 @@ import 'package:cnattendance/services/notification_service.dart';
 import 'package:cnattendance/services/notification_controller.dart';
 import 'package:cnattendance/services/security_service.dart';
 import 'package:cnattendance/services/wifi_attendance_service.dart';
-import 'package:cnattendance/services/wifi_polling_manager.dart';
-import 'package:cnattendance/provider/wifi_attendance_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -54,7 +52,7 @@ Future<void> _initializeAwesomeNotifications() async {
     NotificationController.disableAwesomeNotificationsProcessing();
 
     await AwesomeNotifications().initialize(
-      null, // Use default app icon
+      'resource://drawable/app_icon',
       [
         NotificationChannel(
           channelKey: 'digital_hr_channel',
@@ -208,6 +206,99 @@ Future<void> _disableWifiAttendanceNotifications() async {
   }
 }
 
+Future<String> _resolveInitialRoute() async {
+  final preferences = Preferences();
+
+  try {
+    final hardReset = await preferences.getHardReset();
+    if (hardReset) {
+      await preferences.clearPrefs();
+      preferences.saveHardReset(false);
+      return LoginScreen.routeName;
+    }
+
+    final token = await preferences.getToken();
+    return token.isEmpty ? LoginScreen.routeName : DashboardScreen.routeName;
+  } catch (e) {
+    if (kDebugMode) {
+      debugPrint('⚠️ Failed to resolve initial route: $e');
+    }
+    return LoginScreen.routeName;
+  }
+}
+
+class _BootSplashApp extends StatelessWidget {
+  const _BootSplashApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: _BootSplashView(),
+    );
+  }
+}
+
+class _BootSplashView extends StatelessWidget {
+  const _BootSplashView();
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final logoContainerSize = (size.shortestSide * 0.34).clamp(112.0, 148.0);
+    final logoSize = logoContainerSize * 0.52;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF000000),
+      body: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: logoContainerSize,
+                height: logoContainerSize,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.16),
+                    width: 1,
+                  ),
+                ),
+                child: Center(
+                  child: Image.asset(
+                    'assets/icons/launcher-icon.png',
+                    width: logoSize,
+                    height: logoSize,
+                    fit: BoxFit.contain,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Icon(
+                        Icons.business,
+                        color: Colors.white,
+                        size: logoSize * 0.9,
+                      );
+                    },
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 Future<void> main() async {
   try {
     if (kDebugMode) debugPrint('🚀 Starting app initialization...');
@@ -215,6 +306,9 @@ Future<void> main() async {
     // Initialize Flutter bindings
     WidgetsFlutterBinding.ensureInitialized();
     if (kDebugMode) debugPrint('✅ Flutter bindings initialized');
+
+    // Show a real splash immediately so startup never appears blank.
+    runApp(const _BootSplashApp());
 
     // Block screenshots/screen recordings on Android for sensitive content
     await _disableScreenshots();
@@ -321,13 +415,15 @@ Future<void> main() async {
       }
     }
 
+    final initialRoute = await _resolveInitialRoute();
+
     // Start the app with all required wrappers
     runApp(
       LocalizedApp(
         delegate,
         InAppNotification(
           child: OverlaySupport(
-            child: MyApp(),
+            child: MyApp(initialRoute: initialRoute),
           ),
         ),
       ),
@@ -341,7 +437,8 @@ Future<void> main() async {
           await WifiAttendanceService.initialize();
           if (kDebugMode) debugPrint('✅ WiFi attendance service initialized');
         } catch (e) {
-          if (kDebugMode) debugPrint('⚠️ WiFi attendance service init failed: $e');
+          if (kDebugMode)
+            debugPrint('⚠️ WiFi attendance service init failed: $e');
         }
       }());
     });
@@ -482,7 +579,9 @@ void configLoading() {
 }
 
 class MyApp extends StatefulWidget {
-  const MyApp({Key? key}) : super(key: key);
+  const MyApp({Key? key, this.initialRoute = '/'}) : super(key: key);
+
+  final String initialRoute;
 
   @override
   State<MyApp> createState() => _MyAppState();
@@ -567,7 +666,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             useMaterial3: true,
           ),
           // Add routes for navigation
-          initialRoute: '/',
+          initialRoute: widget.initialRoute,
           routes: {
             '/': (_) => GestureDetector(
                   behavior: HitTestBehavior.translucent,
