@@ -272,53 +272,24 @@ class _BootSplashView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.sizeOf(context);
-    final logoContainerSize = (size.shortestSide * 0.34).clamp(112.0, 148.0);
-    final logoSize = logoContainerSize * 0.52;
+    final logoSize = (size.shortestSide * 0.5).clamp(190.0, 250.0);
 
     return Scaffold(
       backgroundColor: const Color(0xFF000000),
       body: SafeArea(
         child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: logoContainerSize,
-                height: logoContainerSize,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.08),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.16),
-                    width: 1,
-                  ),
-                ),
-                child: Center(
-                  child: Image.asset(
-                    'assets/icons/launcher-icon.png',
-                    width: logoSize,
-                    height: logoSize,
-                    fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Icon(
-                        Icons.business,
-                        color: Colors.white,
-                        size: logoSize * 0.9,
-                      );
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  color: Colors.white,
-                ),
-              ),
-            ],
+          child: Image.asset(
+            'assets/icons/hrm-logo.png',
+            width: logoSize,
+            height: logoSize,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return const Icon(
+                Icons.business,
+                color: Colors.white,
+                size: 96,
+              );
+            },
           ),
         ),
       ),

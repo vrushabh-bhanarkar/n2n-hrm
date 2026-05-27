@@ -1,9 +1,7 @@
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/screen/auth/login_screen.dart';
 import 'package:cnattendance/screen/dashboard/dashboard_screen.dart';
-import 'package:cnattendance/utils/constant.dart';
 import 'package:flutter/material.dart';
-import 'package:hexcolor/hexcolor.dart';
 
 class SplashScreen extends StatefulWidget {
   @override
@@ -66,55 +64,25 @@ class SplashState extends State<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
-    print("SplashScreen: build method called");
     final size = MediaQuery.sizeOf(context);
-    final logoContainerSize = (size.shortestSide * 0.36).clamp(120.0, 156.0);
-    final logoSize = logoContainerSize * 0.54;
+    final logoSize = (size.shortestSide * 0.5).clamp(190.0, 250.0);
 
     return Scaffold(
-      backgroundColor: HexColor(getAppTheme() ? radialBoxTheme : "#000000"),
+      backgroundColor: const Color(0xFF000000),
       body: SafeArea(
         child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: logoContainerSize,
-                height: logoContainerSize,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.08),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.16),
-                    width: 1,
-                  ),
-                ),
-                child: ClipOval(
-                  child: Image.asset(
-                    'assets/icons/launcher-icon.png',
-                    width: logoSize,
-                    height: logoSize,
-                    fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Icon(
-                        Icons.business,
-                        color: Colors.white,
-                        size: logoSize * 0.9,
-                      );
-                    },
-                  ),
-                ),
-              ),
-              SizedBox(height: 20),
-              const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  color: Colors.white,
-                ),
-              ),
-            ],
+          child: Image.asset(
+            'assets/icons/hrm-logo.png',
+            width: logoSize,
+            height: logoSize,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return const Icon(
+                Icons.business,
+                color: Colors.white,
+                size: 96,
+              );
+            },
           ),
         ),
       ),
