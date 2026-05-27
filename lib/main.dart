@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/model/auth.dart';
 import 'package:cnattendance/provider/attendancereportprovider.dart';
@@ -193,11 +194,95 @@ Future<void> _initializeMessagingServices() async {
   }
 }
 
+Future<bool> _runStartupStep(
+  Future<void> future,
+  String label, {
+  Duration timeout = const Duration(seconds: 8),
+}) async {
+  try {
+    await future.timeout(timeout);
+    return true;
+  } on TimeoutException {
+    if (kDebugMode) {
+      debugPrint(
+          '⚠️ $label timed out after ${timeout.inSeconds}s; continuing startup');
+    }
+    return false;
+  } catch (e, stackTrace) {
+    if (kDebugMode) {
+      debugPrint('⚠️ $label failed: $e');
+      debugPrint('Stack trace: $stackTrace');
+    }
+    return false;
+  }
+}
+
 /// Helper for fire-and-forget futures
 void unawaited(Future<void> future) {
   future.catchError((e) {
     if (kDebugMode) debugPrint('⚠️ Error in background initialization: $e');
   });
+}
+
+Future<void> _initializeDeferredStartupServices() async {
+  await _runStartupStep(GetStorage.init(), 'GetStorage init');
+  await _runStartupStep(
+    _disableScreenshots(),
+    'disable screenshots',
+  );
+  await _runStartupStep(
+    _disableWifiAttendanceNotifications(),
+    'disable WiFi attendance notifications',
+  );
+
+  ApiLogger.setEnabled(kDebugMode);
+  if (kDebugMode) {
+    debugPrint('✅ API Logging enabled for debug mode');
+  }
+
+  await _runStartupStep(
+    _initializeAwesomeNotifications(),
+    'awesome notifications',
+  );
+  NotificationController.initStartupTime();
+  if (kDebugMode) debugPrint('✅ Awesome notifications initialized');
+
+  await _runStartupStep(
+    _initializeMessagingServices(),
+    'messaging services',
+  );
+
+  await _runStartupStep(
+    () async {
+      final data =
+          await PlatformAssetBundle().load('assets/ca/lets-encrypt-r3.pem');
+      SecurityContext.defaultContext
+          .setTrustedCertificatesBytes(data.buffer.asUint8List());
+    }(),
+    'SSL certificate',
+  );
+
+  if (Platform.isAndroid) {
+    await _runStartupStep(
+      FlutterDisplayMode.setHighRefreshRate(),
+      'high refresh rate',
+    );
+  }
+
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(() async {
+      try {
+        await WifiAttendanceService.initialize();
+        if (kDebugMode) debugPrint('✅ WiFi attendance service initialized');
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('⚠️ WiFi attendance service init failed: $e');
+        }
+      }
+    }());
+  });
+
+  configLoading();
 }
 
 /// Prevent screenshots and screen recordings on Android using FLAG_SECURE
@@ -308,28 +393,6 @@ Future<void> main() async {
     // Show a real splash immediately so startup never appears blank.
     runApp(const _BootSplashApp());
 
-    // Block screenshots/screen recordings on Android for sensitive content
-    await _disableScreenshots();
-
-    // Ensure WiFi auto attendance notifications are not shown.
-    await _disableWifiAttendanceNotifications();
-
-    // Configure API logging (enabled in debug mode, disabled in release)
-    ApiLogger.setEnabled(kDebugMode);
-    if (kDebugMode) {
-      debugPrint('✅ API Logging enabled for debug mode');
-    }
-
-    // Initialize storage
-    await GetStorage.init();
-    if (kDebugMode) debugPrint('✅ GetStorage initialized');
-
-    // Initialize awesome_notifications before anything else (required for notification handling)
-    await _initializeAwesomeNotifications();
-    NotificationController
-        .initStartupTime(); // Initialize startup safety window
-    if (kDebugMode) debugPrint('✅ Awesome notifications initialized');
-
     // Initialize localization
     // Note: flutter_translate 4.1.0 is incompatible with Flutter 3.41.4 (binary asset manifest)
     // We'll attempt initialization with error recovery
@@ -369,9 +432,15 @@ Future<void> main() async {
       if (Firebase.apps.isEmpty) {
         if (kDebugMode)
           debugPrint('🔥 No Firebase apps found, initializing...');
-        await Firebase.initializeApp(
-            options: DefaultFirebaseOptions.currentPlatform);
-        if (kDebugMode) debugPrint('✅ Firebase initialized successfully');
+        final firebaseReady = await _runStartupStep(
+          Firebase.initializeApp(
+              options: DefaultFirebaseOptions.currentPlatform),
+          'Firebase initialization',
+          timeout: const Duration(seconds: 12),
+        );
+        if (firebaseReady && kDebugMode) {
+          debugPrint('✅ Firebase initialized successfully');
+        }
       } else {
         if (kDebugMode) debugPrint('✅ Firebase already initialized');
       }
@@ -391,28 +460,6 @@ Future<void> main() async {
       // Don't rethrow - allow app to continue without Firebase
     }
 
-    // Initialize all messaging and notification services
-    await _initializeMessagingServices();
-
-    // Load SSL certificate
-    try {
-      ByteData data =
-          await PlatformAssetBundle().load('assets/ca/lets-encrypt-r3.pem');
-      SecurityContext.defaultContext
-          .setTrustedCertificatesBytes(data.buffer.asUint8List());
-    } catch (e) {
-      if (kDebugMode) debugPrint('Failed to load SSL certificate: $e');
-    }
-
-    // Set high refresh rate on Android
-    if (Platform.isAndroid) {
-      try {
-        await FlutterDisplayMode.setHighRefreshRate();
-      } catch (e) {
-        if (kDebugMode) debugPrint('Failed to set high refresh rate: $e');
-      }
-    }
-
     final initialRoute = await _resolveInitialRoute();
 
     // Start the app with all required wrappers
@@ -426,6 +473,8 @@ Future<void> main() async {
         ),
       ),
     );
+
+    unawaited(_initializeDeferredStartupServices());
 
     // Initialize WiFi auto attendance after the first frame so it does not
     // compete with splash/dashboard rendering on startup.

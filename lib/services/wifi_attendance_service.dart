@@ -474,72 +474,82 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
       final fallbackBssid = _normalizeWifiValue(
         prefs.getString(Preferences.WIFI_LAST_MATCHED_BSSID),
       );
-      final bssidForApi = onOfficeWifi
+        final bssidForApi = onOfficeWifi
           ? currentBssid
-          : (currentBssid.isNotEmpty ? currentBssid : fallbackBssid);
+          : '';
 
       final status = onOfficeWifi ? 'connected' : 'disconnected';
+      final cachedAttendanceStatus =
+          prefs.getString(Preferences.WIFI_SESSION_STATUS) ?? 'none';
 
-      // Sync current attendance session from server and drive auto check-in/out by polling.
-      log('[WifiAttendance] ⏳ Fetching attendance status (onOfficeWifi=$onOfficeWifi, status=$status)...');
-      final attendanceStatus = await _fetchAttendanceStatus(
-        prefs,
-        token: token,
-        appUrl: appUrl,
-      );
-      log('[WifiAttendance] 📊 Attendance status: $attendanceStatus');
-
-      if (onOfficeWifi) {
-        lastDisconnectedAt = null;
-        await prefs.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
-        if (attendanceStatus == 'none') {
-          log('[WifiAttendance] ✅ On office WiFi + status=none → triggering auto check-in');
-          await _autoCheckIn(prefs, token: token, appUrl: appUrl);
-        } else {
-          log('[WifiAttendance] ℹ️ On office WiFi but status=$attendanceStatus (not checking in)');
-        }
-      } else {
-        if (attendanceStatus == 'checked_in' ||
-            attendanceStatus == 'on_break') {
-          final persistedDisconnect =
-              prefs.getString(Preferences.WIFI_LAST_DISCONNECT_TIME) ?? '';
-          if (persistedDisconnect.isNotEmpty) {
-            lastDisconnectedAt ??= DateTime.tryParse(persistedDisconnect);
-          }
-
-          lastDisconnectedAt ??= DateTime.now();
-          await prefs.setString(
-            Preferences.WIFI_LAST_DISCONNECT_TIME,
-            lastDisconnectedAt!.toIso8601String(),
-          );
-          final disconnectedFor =
-              DateTime.now().difference(lastDisconnectedAt!);
-          log('[WifiAttendance] 📍 Off WiFi + checked_in: disconnected for ${disconnectedFor.inMinutes}min (threshold: 15min)');
-          if (disconnectedFor >= const Duration(minutes: 15)) {
-            log('[WifiAttendance] ⏱️ 15-minute threshold reached → triggering auto check-out');
-            await _autoCheckOut(prefs, token: token, appUrl: appUrl);
-          }
-        } else {
-          log('[WifiAttendance] ℹ️ Off WiFi but status=$attendanceStatus (not checking out)');
-          lastDisconnectedAt = null;
-          await prefs.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
-        }
-      }
-
-      // Only post WiFi status when the device is actually on an authorized office network.
-      // The backend rejects disconnected/non-office networks with 400, which adds noise and
-      // makes the auto attendance flow look broken even though check-in/out logic is fine.
-      if (onOfficeWifi) {
-        await _postWifiStatus(
+      String attendanceStatus = cachedAttendanceStatus;
+      try {
+        // Sync current attendance session from server and drive auto check-in/out by polling.
+        log('[WifiAttendance] ⏳ Fetching attendance status (onOfficeWifi=$onOfficeWifi, status=$status)...');
+        attendanceStatus = await _fetchAttendanceStatus(
+          prefs,
           token: token,
           appUrl: appUrl,
-          status: status,
-          routerBssid: bssidForApi,
-          currentSsid: currentSsid,
+        ).timeout(
+          const Duration(seconds: 3),
+          onTimeout: () {
+            log(
+              '[WifiAttendance] ⏱️ attendance-status slow, using cached: $cachedAttendanceStatus',
+            );
+            return cachedAttendanceStatus;
+          },
         );
-      } else {
-        log('[WifiAttendance] Skipping wifi-status post because current network is not authorized');
+        log('[WifiAttendance] 📊 Attendance status: $attendanceStatus');
+
+        if (onOfficeWifi) {
+          lastDisconnectedAt = null;
+          await prefs.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
+          if (attendanceStatus == 'none') {
+            log('[WifiAttendance] ✅ On office WiFi + status=none → triggering auto check-in');
+            await _autoCheckIn(prefs, token: token, appUrl: appUrl);
+          } else {
+            log('[WifiAttendance] ℹ️ On office WiFi but status=$attendanceStatus (not checking in)');
+          }
+        } else {
+          if (attendanceStatus == 'checked_in' ||
+              attendanceStatus == 'on_break') {
+            final persistedDisconnect =
+                prefs.getString(Preferences.WIFI_LAST_DISCONNECT_TIME) ?? '';
+            if (persistedDisconnect.isNotEmpty) {
+              lastDisconnectedAt ??= DateTime.tryParse(persistedDisconnect);
+            }
+
+            lastDisconnectedAt ??= DateTime.now();
+            await prefs.setString(
+              Preferences.WIFI_LAST_DISCONNECT_TIME,
+              lastDisconnectedAt!.toIso8601String(),
+            );
+            final disconnectedFor =
+                DateTime.now().difference(lastDisconnectedAt!);
+            log('[WifiAttendance] 📍 Off WiFi + checked_in: disconnected for ${disconnectedFor.inMinutes}min (threshold: 15min)');
+            if (disconnectedFor >= const Duration(minutes: 15)) {
+              log('[WifiAttendance] ⏱️ 15-minute threshold reached → triggering auto check-out');
+              await _autoCheckOut(prefs, token: token, appUrl: appUrl);
+            }
+          } else {
+            log('[WifiAttendance] ℹ️ Off WiFi but status=$attendanceStatus (not checking out)');
+            lastDisconnectedAt = null;
+            await prefs.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
+          }
+        }
+      } catch (e) {
+        log('[WifiAttendance] attendance sync failed, continuing to report status: $e');
       }
+
+      // Report both connected and disconnected states so the backend has the full
+      // presence transition history instead of only seeing office-network joins.
+      await _postWifiStatus(
+        token: token,
+        appUrl: appUrl,
+        status: status,
+        routerBssid: bssidForApi,
+        currentSsid: currentSsid,
+      );
 
       await prefs.setString(Preferences.WIFI_LAST_POLLED_STATUS, status);
 
