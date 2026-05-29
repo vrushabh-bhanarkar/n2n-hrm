@@ -393,6 +393,18 @@ Future<void> _autoCheckOut(
   required String appUrl,
 }) async {
   try {
+    final lastCheckoutAtText =
+        prefs.getString(Preferences.WIFI_LAST_CHECKOUT_TIME) ?? '';
+    if (lastCheckoutAtText.isNotEmpty) {
+      final lastCheckoutAt = DateTime.tryParse(lastCheckoutAtText);
+      if (lastCheckoutAt != null &&
+          DateTime.now().difference(lastCheckoutAt) <
+              const Duration(minutes: 2)) {
+        log('[WifiAttendance] ⏭️ Skipping auto check-out: recent checkout already sent at $lastCheckoutAtText');
+        return;
+      }
+    }
+
     log('[WifiAttendance] 🔄 Attempting auto check-out to $appUrl${Constant.CHECK_OUT_URL}');
     final uri = Uri.parse('$appUrl${Constant.CHECK_OUT_URL}');
     final response = await http
@@ -414,6 +426,10 @@ Future<void> _autoCheckOut(
 
     if (response.statusCode == 200) {
       await prefs.setString(Preferences.WIFI_SESSION_STATUS, 'checked_out');
+      await prefs.setString(
+        Preferences.WIFI_LAST_CHECKOUT_TIME,
+        DateTime.now().toIso8601String(),
+      );
       log('[WifiAttendance] ✅ auto check-out success: ${response.statusCode}');
     } else {
       log('[WifiAttendance] ❌ auto check-out failed: ${response.statusCode} - ${response.body}');

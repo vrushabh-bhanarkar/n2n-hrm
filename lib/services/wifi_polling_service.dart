@@ -263,6 +263,18 @@ class WifiPollingService {
 
   Future<void> _autoCheckOut() async {
     try {
+      final lastCheckoutAtText =
+          preferences.getString(Preferences.WIFI_LAST_CHECKOUT_TIME) ?? '';
+      if (lastCheckoutAtText.isNotEmpty) {
+        final lastCheckoutAt = DateTime.tryParse(lastCheckoutAtText);
+        if (lastCheckoutAt != null &&
+            DateTime.now().difference(lastCheckoutAt) <
+                const Duration(minutes: 2)) {
+          log('[WifiPolling] Skipping auto check-out: recent checkout already sent at $lastCheckoutAtText');
+          return;
+        }
+      }
+
       final uri = Uri.parse('$baseUrl${Constant.CHECK_OUT_URL}');
       final response = await http.post(
         uri,
@@ -281,6 +293,10 @@ class WifiPollingService {
 
       if (response.statusCode == 200) {
         await preferences.setString(Preferences.WIFI_SESSION_STATUS, 'checked_out');
+        await preferences.setString(
+          Preferences.WIFI_LAST_CHECKOUT_TIME,
+          DateTime.now().toIso8601String(),
+        );
         log('[WifiPolling] Auto check-out successful');
       }
     } catch (e) {
