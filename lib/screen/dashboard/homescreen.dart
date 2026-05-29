@@ -174,8 +174,7 @@ class HomeScreenState extends State<HomeScreen> {
               icon: 'check_out'),
         ]);
 
-        await Provider.of<DashboardProvider>(context, listen: false)
-            .getFeatures();
+        await loadDashboard();
       },
     );
 
@@ -567,19 +566,15 @@ class HomeScreenState extends State<HomeScreen> {
 
       // Call attendance API directly for WiFi check-in
       final currentBssidValue = _normalizeWifiValue(currentBssid);
-      final fallbackBssid = _normalizeWifiValue(
-        sp.getString(Preferences.WIFI_LAST_MATCHED_BSSID) ??
-            sp.getString(Preferences.WIFI_OFFICE_BSSID),
-      );
       final isPlaceholderBssid =
           currentBssidValue.isEmpty || currentBssidValue == '02:00:00:00:00:00';
       final bssidForApi = !isPlaceholderBssid &&
               currentBssid != null &&
               currentBssid.trim().isNotEmpty
           ? currentBssid.trim()
-          : fallbackBssid;
+          : '';
       if (bssidForApi.isEmpty) {
-        log('[HomeScreen] Office WiFi matched but no usable BSSID was available, skipping auto check-in API');
+        log('[HomeScreen] Office WiFi matched but no usable live BSSID was available, skipping cached fallback');
         return;
       }
 

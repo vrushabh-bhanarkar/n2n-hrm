@@ -58,6 +58,28 @@ class WifiPollingService {
         }
       }
 
+      String matchedServerBssid = '';
+      if (isWifiConnected) {
+        try {
+          final cachedSsids = preferences.getString(Preferences.WIFI_SERVER_SSIDS);
+          List<dynamic> serverSsids = [];
+          if (cachedSsids != null && cachedSsids.isNotEmpty) {
+            serverSsids = jsonDecode(cachedSsids) as List<dynamic>;
+          }
+
+          matchedServerBssid = _findMatchedServerBssid(
+                serverSsids,
+                bssid: currentBssid,
+                ssid: currentSsid,
+              ) ??
+              '';
+        } catch (_) {}
+      }
+
+      final bssidForApi = matchedServerBssid.isNotEmpty
+          ? matchedServerBssid
+          : currentBssid;
+
       final isOfficeWifi =
           await _isConnectedToOfficeWifi(currentBssid, currentSsid);
       final attendanceStatus = await _getAttendanceStatus();
@@ -76,7 +98,7 @@ class WifiPollingService {
 
       await _postWifiStatus(
         status: isOfficeWifi ? 'connected' : 'disconnected',
-        bssid: currentBssid,
+        bssid: bssidForApi,
         ssid: currentSsid,
       );
     } catch (e) {
@@ -109,6 +131,31 @@ class WifiPollingService {
       item['ssid'],
       item['name'],
     ];
+  }
+
+  String? _findMatchedServerBssid(
+    List<dynamic> serverSsids, {
+    required String bssid,
+    required String ssid,
+  }) {
+    for (final item in serverSsids) {
+      if (item is! Map) continue;
+
+      for (final candidate in _routerCandidates(item)) {
+        final value = _normalizeWifiValue(candidate?.toString());
+        if (value.isEmpty) continue;
+
+        if (bssid.isNotEmpty && value == bssid) {
+          return value;
+        }
+
+        if (!_isMacAddress(value) && ssid.isNotEmpty && value == ssid) {
+          return value;
+        }
+      }
+    }
+
+    return null;
   }
 
   Future<bool> _isConnectedToOfficeWifi(String bssid, String ssid) async {
@@ -172,27 +219,34 @@ class WifiPollingService {
         },
       ).timeout(const Duration(seconds: 6));
 
+      log('[WifiPolling] router-ssid API ${response.statusCode}: ${response.body}');
+
       if (response.statusCode != 200) {
         return [];
       }
 
       final payload = jsonDecode(response.body);
       if (payload is Map && payload['data'] is List) {
-        return (payload['data'] as List)
+        final filtered = (payload['data'] as List)
             .where((s) =>
                 s is Map &&
                 (_isRouterActive(s['is_active']) || s['is_active'] == null))
             .toList();
+        log('[WifiPolling] router-ssid parsed entries: $filtered');
+        return filtered;
       }
 
       if (payload is List) {
-        return payload
+        final filtered = payload
             .where((s) =>
                 s is Map &&
                 (_isRouterActive(s['is_active']) || s['is_active'] == null))
             .toList();
+        log('[WifiPolling] router-ssid parsed entries: $filtered');
+        return filtered;
       }
 
+      log('[WifiPolling] router-ssid parsed entries: []');
       return [];
     } catch (e) {
       log('[WifiPolling] Error fetching server SSIDs: $e');

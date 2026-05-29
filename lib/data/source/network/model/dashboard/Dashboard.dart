@@ -34,6 +34,22 @@ class Dashboard {
   });
 
   factory Dashboard.fromJson(dynamic json) {
+    final rawTeamMembers = json['teamMembers'];
+    final teamMembers = rawTeamMembers is List
+        ? rawTeamMembers
+            .whereType<Map>()
+            .map((x) => employees.Employee.fromJson(x))
+            .toList()
+        : <employees.Employee>[];
+
+    final rawFeatures = json['features'];
+    final parsedFeatures = rawFeatures is List
+        ? rawFeatures
+            .where((item) => item != null)
+            .map((i) => Feature.fromJson(i))
+            .toList()
+        : <Feature>[];
+
     return Dashboard(
       user: User.fromJson(json['user']),
       employeeTodayAttendance:
@@ -46,12 +62,8 @@ class Dashboard {
       dateInAd: json['date_in_ad'] ?? true,
       addNfc: json['add_nfc'] ?? true,
       attendance_note: json['attendance_note'] ?? false,
-      employee: json["teamMembers"] != null
-          ? List<employees.Employee>.from(
-              json['teamMembers'].map((x) => employees.Employee.fromJson(x)))
-          : [],
-      features:
-          (json['features'] as List).map((i) => Feature.fromJson(i)).toList(),
+      employee: teamMembers,
+      features: parsedFeatures,
       holiday: json["recent_holiday"] != null
           ? Holidays.fromJson(json["recent_holiday"])
           : null,

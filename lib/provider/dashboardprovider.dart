@@ -694,9 +694,10 @@ class DashboardProvider with ChangeNotifier {
   Future<List<dynamic>> _fetchServerSsids({
     required String token,
     required String appUrl,
+    bool forceRefresh = false,
   }) async {
     // Check if cache is still valid
-    if (_cachedServerSsids.isNotEmpty && _ssidCacheTime != null) {
+    if (!forceRefresh && _cachedServerSsids.isNotEmpty && _ssidCacheTime != null) {
       final cachAge = DateTime.now().difference(_ssidCacheTime!);
       if (cachAge < _ssidCacheDuration) {
         log('[WiFiAuth] ⚡ Cache HIT - reusing ${_cachedServerSsids.length} SSIDs');
@@ -716,6 +717,8 @@ class DashboardProvider with ChangeNotifier {
       timeout: const Duration(seconds: 8),
     );
 
+    log('[WiFiAuth] router-ssid API ${response.statusCode}: ${response.body}');
+
     if (response.statusCode != 200) {
       return [];
     }
@@ -732,6 +735,8 @@ class DashboardProvider with ChangeNotifier {
           .where((s) => s is Map && s['is_active'].toString() == '1')
           .toList();
     }
+
+    log('[WiFiAuth] router-ssid parsed entries: $filtered');
 
     // Update cache without logging full response
     _cachedServerSsids = filtered;
@@ -762,7 +767,7 @@ class DashboardProvider with ChangeNotifier {
       throw 'Unable to read current WiFi details. Please reconnect and try again.';
     }
 
-    final serverSsids = await _fetchServerSsids(token: token, appUrl: appUrl);
+    var serverSsids = await _fetchServerSsids(token: token, appUrl: appUrl);
     if (serverSsids.isEmpty) {
       throw 'Could not validate office WiFi at the moment. Please try again.';
     }
@@ -775,6 +780,29 @@ class DashboardProvider with ChangeNotifier {
     );
 
     if (matchedServerBssid == null) {
+      // The cached office WiFi list may be stale when the backend has changed
+      // the router entry. Refresh once from the API before failing.
+      serverSsids = await _fetchServerSsids(
+        token: token,
+        appUrl: appUrl,
+        forceRefresh: true,
+      );
+
+      if (serverSsids.isNotEmpty) {
+        final refreshedMatchedServerBssid = _findMatchedServerBssid(
+          serverSsids,
+          currentBssid: currentBssid,
+          currentSsid: currentSsid,
+        );
+
+        if (refreshedMatchedServerBssid != null) {
+          return {
+            'ssid': refreshedMatchedServerBssid,
+            'bssid': normalizedBssid,
+          };
+        }
+      }
+
       throw 'WiFi network is not authorized for attendance. Please connect to the correct network.';
     }
 

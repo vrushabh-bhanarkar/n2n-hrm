@@ -7,7 +7,11 @@ class Login {
   });
 
   factory Login.fromJson(dynamic json) {
-    return Login(user: User.fromJson(json['user']), tokens: json['tokens'].toString());
+    final rawToken = json['tokens'] ?? json['token'] ?? '';
+    return Login(
+      user: User.fromJson(json['user']),
+      tokens: rawToken.toString(),
+    );
   }
 
   final User user;

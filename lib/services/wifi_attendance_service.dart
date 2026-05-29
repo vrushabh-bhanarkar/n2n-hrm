@@ -97,10 +97,23 @@ Future<List<dynamic>> _fetchAndCacheServerSsids(
   SharedPreferences prefs,
   String token,
   String appUrl,
+  {bool forceRefresh = false}
 ) async {
   try {
     if (!await _hasNetworkConnection()) {
       return [];
+    }
+
+    if (!forceRefresh) {
+      final cachedSsids = prefs.getString(Preferences.WIFI_SERVER_SSIDS);
+      if (cachedSsids != null && cachedSsids.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(cachedSsids);
+          if (decoded is List && decoded.isNotEmpty) {
+            return decoded;
+          }
+        } catch (_) {}
+      }
     }
 
     final uri = Uri.parse('$appUrl${Constant.ROUTER_SSID_URL}');
@@ -111,6 +124,8 @@ Future<List<dynamic>> _fetchAndCacheServerSsids(
         'Authorization': 'Bearer $token',
       },
     );
+
+    log('[WifiAttendance] router-ssid API ${response.statusCode}: ${response.body}');
 
     if (response.statusCode != 200) {
       return [];
@@ -132,12 +147,69 @@ Future<List<dynamic>> _fetchAndCacheServerSsids(
           .toList();
     }
 
+    if (filtered.isNotEmpty) {
+      log('[WifiAttendance] router-ssid parsed entries: ${filtered.map((item) {
+        if (item is Map) {
+          return {
+            'bssid': item['bssid'],
+            'router_bssid': item['router_bssid'],
+            'router_mac': item['router_mac'],
+            'ssid': item['ssid'],
+            'name': item['name'],
+            'is_active': item['is_active'],
+          };
+        }
+        return item;
+      }).toList()}');
+    } else {
+      log('[WifiAttendance] router-ssid parsed entries: []');
+    }
+
     await prefs.setString(Preferences.WIFI_SERVER_SSIDS, jsonEncode(filtered));
     return filtered;
   } catch (e) {
     log('[WifiAttendance] fetch SSID error: $e');
     return [];
   }
+}
+
+String? _findMatchedServerBssid(
+  List<dynamic> serverSsids, {
+  required String? currentBssid,
+  required String? currentSsid,
+}) {
+  final bssidNorm = _normalizeWifiValue(currentBssid);
+  final ssidNorm = _normalizeWifiValue(currentSsid);
+  if (bssidNorm.isEmpty && ssidNorm.isEmpty) return null;
+
+  for (final item in serverSsids) {
+    if (item is Map) {
+      final candidates = _routerCandidates(item);
+      for (final candidate in candidates) {
+        final value = _normalizeWifiValue(candidate?.toString());
+        if (value.isEmpty) continue;
+
+        if (bssidNorm.isNotEmpty && value == bssidNorm) {
+          return value;
+        }
+        if (!_isMacAddress(value) && ssidNorm.isNotEmpty && value == ssidNorm) {
+          return value;
+        }
+      }
+    } else {
+      final value = _normalizeWifiValue(item.toString());
+      if (value.isEmpty) continue;
+
+      if (bssidNorm.isNotEmpty && value == bssidNorm) {
+        return value;
+      }
+      if (!_isMacAddress(value) && ssidNorm.isNotEmpty && value == ssidNorm) {
+        return value;
+      }
+    }
+  }
+
+  return null;
 }
 
 Future<void> _postWifiStatus({
@@ -451,13 +523,30 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
       String currentBssid = wifiIdentity.bssid;
       String currentSsid = wifiIdentity.ssid;
 
-      final onOfficeWifi = hasWifi &&
-          serverSsids.isNotEmpty &&
-          _matchesOfficeWifi(
+      var matchedServerBssid = _findMatchedServerBssid(
+        serverSsids,
+        currentBssid: currentBssid,
+        currentSsid: currentSsid,
+      );
+
+      if (hasWifi && matchedServerBssid == null && serverSsids.isNotEmpty) {
+        final refreshedSsids = await _fetchAndCacheServerSsids(
+          prefs,
+          token,
+          appUrl,
+          forceRefresh: true,
+        );
+        if (refreshedSsids.isNotEmpty) {
+          serverSsids = refreshedSsids;
+          matchedServerBssid = _findMatchedServerBssid(
             serverSsids,
             currentBssid: currentBssid,
             currentSsid: currentSsid,
           );
+        }
+      }
+
+      final onOfficeWifi = hasWifi && matchedServerBssid != null;
 
       if (!onOfficeWifi) {
         log(
@@ -465,18 +554,13 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
         );
       }
 
-      if (onOfficeWifi && currentBssid.isNotEmpty) {
+      if (onOfficeWifi && matchedServerBssid != null) {
         await prefs.setString(
-            Preferences.WIFI_LAST_MATCHED_BSSID, currentBssid);
-        await prefs.setString(Preferences.WIFI_OFFICE_BSSID, currentBssid);
+            Preferences.WIFI_LAST_MATCHED_BSSID, matchedServerBssid);
+        await prefs.setString(Preferences.WIFI_OFFICE_BSSID, matchedServerBssid);
       }
 
-      final fallbackBssid = _normalizeWifiValue(
-        prefs.getString(Preferences.WIFI_LAST_MATCHED_BSSID),
-      );
-        final bssidForApi = onOfficeWifi
-          ? currentBssid
-          : '';
+      final bssidForApi = matchedServerBssid ?? currentBssid;
 
       final status = onOfficeWifi ? 'connected' : 'disconnected';
       final cachedAttendanceStatus =
