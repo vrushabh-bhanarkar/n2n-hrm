@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:async';
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/model/auth.dart';
 import 'package:cnattendance/provider/attendancereportprovider.dart';
@@ -26,6 +25,8 @@ import 'package:cnattendance/services/notification_service.dart';
 import 'package:cnattendance/services/notification_controller.dart';
 import 'package:cnattendance/services/security_service.dart';
 import 'package:cnattendance/services/wifi_attendance_service.dart';
+import 'package:cnattendance/services/wifi_polling_manager.dart';
+import 'package:cnattendance/provider/wifi_attendance_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -53,7 +54,7 @@ Future<void> _initializeAwesomeNotifications() async {
     NotificationController.disableAwesomeNotificationsProcessing();
 
     await AwesomeNotifications().initialize(
-      'resource://drawable/app_icon',
+      null, // Use default app icon
       [
         NotificationChannel(
           channelKey: 'digital_hr_channel',
@@ -118,29 +119,6 @@ Future<void> _requestNotificationPermissions() async {
   }
 }
 
-/// Request permissions needed for WiFi auto attendance.
-Future<void> _requestWifiAttendancePermissions() async {
-  try {
-    if (!Platform.isAndroid) {
-      return;
-    }
-
-    await Permission.locationWhenInUse.request();
-
-    try {
-      await Permission.nearbyWifiDevices.request();
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('⚠️ Nearby WiFi devices permission request failed: $e');
-      }
-    }
-  } catch (e) {
-    if (kDebugMode) {
-      debugPrint('❌ Error requesting WiFi attendance permissions: $e');
-    }
-  }
-}
-
 /// Initialize messaging and notification services (optimized for fast chat notification response)
 Future<void> _initializeMessagingServices() async {
   try {
@@ -161,10 +139,6 @@ Future<void> _initializeMessagingServices() async {
     // Request permissions early (non-blocking for notification processing)
     await _requestNotificationPermissions();
     if (kDebugMode) debugPrint('✅ Notification permissions requested');
-
-    // Request WiFi/location permissions needed for auto attendance.
-    await _requestWifiAttendancePermissions();
-    if (kDebugMode) debugPrint('✅ WiFi attendance permissions requested');
 
     // Initialize non-critical services in background to avoid blocking notification navigation
     // These are deferred to allow chat notifications to navigate immediately
@@ -194,95 +168,11 @@ Future<void> _initializeMessagingServices() async {
   }
 }
 
-Future<bool> _runStartupStep(
-  Future<void> future,
-  String label, {
-  Duration timeout = const Duration(seconds: 8),
-}) async {
-  try {
-    await future.timeout(timeout);
-    return true;
-  } on TimeoutException {
-    if (kDebugMode) {
-      debugPrint(
-          '⚠️ $label timed out after ${timeout.inSeconds}s; continuing startup');
-    }
-    return false;
-  } catch (e, stackTrace) {
-    if (kDebugMode) {
-      debugPrint('⚠️ $label failed: $e');
-      debugPrint('Stack trace: $stackTrace');
-    }
-    return false;
-  }
-}
-
 /// Helper for fire-and-forget futures
 void unawaited(Future<void> future) {
   future.catchError((e) {
     if (kDebugMode) debugPrint('⚠️ Error in background initialization: $e');
   });
-}
-
-Future<void> _initializeDeferredStartupServices() async {
-  await _runStartupStep(GetStorage.init(), 'GetStorage init');
-  await _runStartupStep(
-    _disableScreenshots(),
-    'disable screenshots',
-  );
-  await _runStartupStep(
-    _disableWifiAttendanceNotifications(),
-    'disable WiFi attendance notifications',
-  );
-
-  ApiLogger.setEnabled(kDebugMode);
-  if (kDebugMode) {
-    debugPrint('✅ API Logging enabled for debug mode');
-  }
-
-  await _runStartupStep(
-    _initializeAwesomeNotifications(),
-    'awesome notifications',
-  );
-  NotificationController.initStartupTime();
-  if (kDebugMode) debugPrint('✅ Awesome notifications initialized');
-
-  await _runStartupStep(
-    _initializeMessagingServices(),
-    'messaging services',
-  );
-
-  await _runStartupStep(
-    () async {
-      final data =
-          await PlatformAssetBundle().load('assets/ca/lets-encrypt-r3.pem');
-      SecurityContext.defaultContext
-          .setTrustedCertificatesBytes(data.buffer.asUint8List());
-    }(),
-    'SSL certificate',
-  );
-
-  if (Platform.isAndroid) {
-    await _runStartupStep(
-      FlutterDisplayMode.setHighRefreshRate(),
-      'high refresh rate',
-    );
-  }
-
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(() async {
-      try {
-        await WifiAttendanceService.initialize();
-        if (kDebugMode) debugPrint('✅ WiFi attendance service initialized');
-      } catch (e) {
-        if (kDebugMode) {
-          debugPrint('⚠️ WiFi attendance service init failed: $e');
-        }
-      }
-    }());
-  });
-
-  configLoading();
 }
 
 /// Prevent screenshots and screen recordings on Android using FLAG_SECURE
@@ -318,70 +208,6 @@ Future<void> _disableWifiAttendanceNotifications() async {
   }
 }
 
-Future<String> _resolveInitialRoute() async {
-  final preferences = Preferences();
-
-  try {
-    final hardReset = await preferences.getHardReset();
-    if (hardReset) {
-      await preferences.clearPrefs();
-      preferences.saveHardReset(false);
-      return LoginScreen.routeName;
-    }
-
-    final token = await preferences.getToken();
-    return token.isEmpty ? LoginScreen.routeName : DashboardScreen.routeName;
-  } catch (e) {
-    if (kDebugMode) {
-      debugPrint('⚠️ Failed to resolve initial route: $e');
-    }
-    return LoginScreen.routeName;
-  }
-}
-
-class _BootSplashApp extends StatelessWidget {
-  const _BootSplashApp();
-
-  @override
-  Widget build(BuildContext context) {
-    return const MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: _BootSplashView(),
-    );
-  }
-}
-
-class _BootSplashView extends StatelessWidget {
-  const _BootSplashView();
-
-  @override
-  Widget build(BuildContext context) {
-    final size = MediaQuery.sizeOf(context);
-    final logoSize = (size.shortestSide * 0.5).clamp(190.0, 250.0);
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF000000),
-      body: SafeArea(
-        child: Center(
-          child: Image.asset(
-            'assets/icons/hrm-logo.png',
-            width: logoSize,
-            height: logoSize,
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) {
-              return const Icon(
-                Icons.business,
-                color: Colors.white,
-                size: 96,
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 Future<void> main() async {
   try {
     if (kDebugMode) debugPrint('🚀 Starting app initialization...');
@@ -390,8 +216,27 @@ Future<void> main() async {
     WidgetsFlutterBinding.ensureInitialized();
     if (kDebugMode) debugPrint('✅ Flutter bindings initialized');
 
-    // Show a real splash immediately so startup never appears blank.
-    runApp(const _BootSplashApp());
+    // Block screenshots/screen recordings on Android for sensitive content
+    await _disableScreenshots();
+
+    // Ensure WiFi auto attendance notifications are not shown.
+    await _disableWifiAttendanceNotifications();
+
+    // Configure API logging (enabled in debug mode, disabled in release)
+    ApiLogger.setEnabled(kDebugMode);
+    if (kDebugMode) {
+      debugPrint('✅ API Logging enabled for debug mode');
+    }
+
+    // Initialize storage
+    await GetStorage.init();
+    if (kDebugMode) debugPrint('✅ GetStorage initialized');
+
+    // Initialize awesome_notifications before anything else (required for notification handling)
+    await _initializeAwesomeNotifications();
+    NotificationController
+        .initStartupTime(); // Initialize startup safety window
+    if (kDebugMode) debugPrint('✅ Awesome notifications initialized');
 
     // Initialize localization
     // Note: flutter_translate 4.1.0 is incompatible with Flutter 3.41.4 (binary asset manifest)
@@ -432,15 +277,9 @@ Future<void> main() async {
       if (Firebase.apps.isEmpty) {
         if (kDebugMode)
           debugPrint('🔥 No Firebase apps found, initializing...');
-        final firebaseReady = await _runStartupStep(
-          Firebase.initializeApp(
-              options: DefaultFirebaseOptions.currentPlatform),
-          'Firebase initialization',
-          timeout: const Duration(seconds: 12),
-        );
-        if (firebaseReady && kDebugMode) {
-          debugPrint('✅ Firebase initialized successfully');
-        }
+        await Firebase.initializeApp(
+            options: DefaultFirebaseOptions.currentPlatform);
+        if (kDebugMode) debugPrint('✅ Firebase initialized successfully');
       } else {
         if (kDebugMode) debugPrint('✅ Firebase already initialized');
       }
@@ -460,7 +299,35 @@ Future<void> main() async {
       // Don't rethrow - allow app to continue without Firebase
     }
 
-    final initialRoute = await _resolveInitialRoute();
+    // Initialize all messaging and notification services
+    await _initializeMessagingServices();
+
+    // Initialize WiFi auto attendance background service.
+    try {
+      await WifiAttendanceService.initialize();
+      if (kDebugMode) debugPrint('✅ WiFi attendance service initialized');
+    } catch (e) {
+      if (kDebugMode) debugPrint('⚠️ WiFi attendance service init failed: $e');
+    }
+
+    // Load SSL certificate
+    try {
+      ByteData data =
+          await PlatformAssetBundle().load('assets/ca/lets-encrypt-r3.pem');
+      SecurityContext.defaultContext
+          .setTrustedCertificatesBytes(data.buffer.asUint8List());
+    } catch (e) {
+      if (kDebugMode) debugPrint('Failed to load SSL certificate: $e');
+    }
+
+    // Set high refresh rate on Android
+    if (Platform.isAndroid) {
+      try {
+        await FlutterDisplayMode.setHighRefreshRate();
+      } catch (e) {
+        if (kDebugMode) debugPrint('Failed to set high refresh rate: $e');
+      }
+    }
 
     // Start the app with all required wrappers
     runApp(
@@ -468,27 +335,11 @@ Future<void> main() async {
         delegate,
         InAppNotification(
           child: OverlaySupport(
-            child: MyApp(initialRoute: initialRoute),
+            child: MyApp(),
           ),
         ),
       ),
     );
-
-    unawaited(_initializeDeferredStartupServices());
-
-    // Initialize WiFi auto attendance after the first frame so it does not
-    // compete with splash/dashboard rendering on startup.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(() async {
-        try {
-          await WifiAttendanceService.initialize();
-          if (kDebugMode) debugPrint('✅ WiFi attendance service initialized');
-        } catch (e) {
-          if (kDebugMode)
-            debugPrint('⚠️ WiFi attendance service init failed: $e');
-        }
-      }());
-    });
 
     // Configure loading overlay
     configLoading();
@@ -626,9 +477,7 @@ void configLoading() {
 }
 
 class MyApp extends StatefulWidget {
-  const MyApp({Key? key, this.initialRoute = '/'}) : super(key: key);
-
-  final String initialRoute;
+  const MyApp({Key? key}) : super(key: key);
 
   @override
   State<MyApp> createState() => _MyAppState();
@@ -713,7 +562,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             useMaterial3: true,
           ),
           // Add routes for navigation
-          initialRoute: widget.initialRoute,
+          initialRoute: '/',
           routes: {
             '/': (_) => GestureDetector(
                   behavior: HitTestBehavior.translucent,

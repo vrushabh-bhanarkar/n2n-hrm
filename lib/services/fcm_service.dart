@@ -7,20 +7,33 @@ import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'local_notification_service.dart';
 import 'package:get/get.dart';
-import 'package:cnattendance/screen/profile/chatscreen.dart' hide ChatScreen;
 import 'package:cnattendance/screens/chat/chat_screen.dart';
 import 'package:cnattendance/screens/chat/project_chat_screen.dart';
 // Removed backend service imports to operate without remote backend
 import 'package:cnattendance/model/chat/conversation.dart';
 import 'package:cnattendance/data/source/datastore/preferences.dart';
-import 'package:cnattendance/utils/navigationservice.dart';
+import 'package:cnattendance/services/wifi_attendance_service.dart';
 
 /// Global variables to track current chat context and message deduplication
 String? _currentChatConversationId;
 bool _isInChatScreen = false;
 RemoteMessage? _pendingInitialMessage;
 bool _pendingInitialMessageHandled = false;
-bool _launchedFromNotification = false;
+
+bool _isBreakApprovalNotification(RemoteMessage message) {
+  final title = (message.notification?.title ?? message.data['title'] ?? '')
+    .toString()
+    .toLowerCase();
+  final body = (message.notification?.body ??
+      message.data['body'] ??
+      message.data['message'] ??
+      '')
+    .toString()
+    .toLowerCase();
+
+  return title.contains('break') &&
+    (title.contains('approved') || body.contains('approved'));
+}
 
 /// CRITICAL: Must be top-level function for background handling
 @pragma('vm:entry-point')
@@ -242,11 +255,9 @@ class FCMService {
         print('📌 Storing initial notification for post-build handling (no backend)');
         _pendingInitialMessage = initialMessage;
         _pendingInitialMessageHandled = false;
-        _launchedFromNotification = true;
       } else {
         _pendingInitialMessage = null;
         _pendingInitialMessageHandled = false;
-        _launchedFromNotification = false;
       }
 
       print('✅ FCM initialized successfully');
@@ -328,6 +339,12 @@ class FCMService {
 
     // Show the notification
     await _showForegroundNotification(title, body, message.data);
+
+    // Break approvals should kick WiFi attendance sync immediately.
+    if (_isBreakApprovalNotification(message)) {
+      print('📱 Break approval detected - forcing immediate WiFi attendance check');
+      WifiAttendanceService.forceCheck();
+    }
   }
 
   /// Show notification when app is in foreground
@@ -608,7 +625,6 @@ class FCMService {
     _pendingInitialMessage = null;
 
     print('🎯 Processing pending FCM initial message from cold-start');
-    final navigationStartTime = DateTime.now();
     await _handleNotificationTap(message);
   }
 

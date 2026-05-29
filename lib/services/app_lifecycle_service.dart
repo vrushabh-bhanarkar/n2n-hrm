@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cnattendance/services/local_notification_service.dart';
-import 'package:cnattendance/services/presence_sync_service.dart';
-import 'package:cnattendance/services/realtime_chat_service.dart';
+import 'package:cnattendance/services/wifi_polling_manager.dart';
 // REMOVED: GlobalMessagePollingService - using FCM only for notifications
 
 /// Service to handle app lifecycle events and background notification management
@@ -57,12 +56,9 @@ class AppLifecycleService with WidgetsBindingObserver {
 
   /// Called when app comes to foreground
   void _onAppResumed() {
-    RealtimeChatService.setUserOnlineStatus(true).catchError((e) {
-      print('⚠️ Error setting user online: $e');
-    });
-    PresenceSyncService.startForegroundSync();
-    PresenceSyncService.markOnlineViaBackend().catchError((e) {
-      print('⚠️ Error syncing online presence to backend: $e');
+    // Resume WiFi polling when app comes to foreground
+    WifiPollingManager().resumePolling().catchError((e) {
+      print('⚠️ Error resuming WiFi polling: $e');
     });
 
     // REMOVED: Global background polling - notifications come from FCM only
@@ -76,10 +72,10 @@ class AppLifecycleService with WidgetsBindingObserver {
 
   /// Called when app goes to background
   void _onAppBackgrounded() {
-    RealtimeChatService.setUserOnlineStatus(false).catchError((e) {
-      print('⚠️ Error setting user offline: $e');
+    // Pause WiFi polling when app goes to background to save battery
+    WifiPollingManager().pausePolling().catchError((e) {
+      print('⚠️ Error pausing WiFi polling: $e');
     });
-    PresenceSyncService.stopForegroundSync();
 
     // REMOVED: Global background polling - notifications come from FCM only
     // Start global background polling when app goes to background
