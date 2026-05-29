@@ -43,6 +43,12 @@ class LeaveScreenState extends State<LeaveScreen> with WidgetsBindingObserver {
       showToast(leaveData.message);
     }
 
+    if (leaveProvider.leaveList.isNotEmpty && mounted) {
+      setState(() {
+        isVisible = true;
+      });
+    }
+
     getLeaveDetailList();
     return "Loaded";
   }
@@ -54,8 +60,17 @@ class LeaveScreenState extends State<LeaveScreen> with WidgetsBindingObserver {
     if (!mounted) {
       return;
     }
+
+    if (leaveProvider.leaveList.isNotEmpty) {
+      setState(() {
+        isVisible = true;
+      });
+    }
+
     if (detailResponse.statusCode == 200) {
-      isVisible = true;
+      setState(() {
+        isVisible = true;
+      });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           padding: EdgeInsets.all(20), content: Text(detailResponse.message)));

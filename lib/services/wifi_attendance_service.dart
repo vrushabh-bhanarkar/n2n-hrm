@@ -21,6 +21,29 @@ String _normalizeWifiValue(String? value) {
   return (value ?? '').trim().replaceAll('"', '').toLowerCase();
 }
 
+bool _hasReliableWifiIdentity({
+  required bool hasWifi,
+  required String currentBssid,
+  required String currentSsid,
+}) {
+  if (!hasWifi) {
+    return false;
+  }
+
+  final bssid = _normalizeWifiValue(currentBssid);
+  final ssid = _normalizeWifiValue(currentSsid);
+
+  if (bssid.isEmpty && ssid.isEmpty) {
+    return false;
+  }
+
+  if (bssid == '02:00:00:00:00:00' && ssid.isEmpty) {
+    return false;
+  }
+
+  return true;
+}
+
 bool _isMacAddress(String value) {
   return RegExp(r'^[0-9a-f]{2}(:[0-9a-f]{2}){5}$').hasMatch(value);
 }
@@ -523,6 +546,19 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
       String currentBssid = wifiIdentity.bssid;
       String currentSsid = wifiIdentity.ssid;
 
+      final hasReliableWifiIdentity = _hasReliableWifiIdentity(
+        hasWifi: hasWifi,
+        currentBssid: currentBssid,
+        currentSsid: currentSsid,
+      );
+
+      if (hasWifi && !hasReliableWifiIdentity) {
+        log(
+          '[WifiAttendance] WiFi identity unavailable (BSSID=${currentBssid.isEmpty ? '(empty)' : currentBssid}, SSID=${currentSsid.isEmpty ? '(empty)' : currentSsid}) - skipping this poll cycle',
+        );
+        return;
+      }
+
       var matchedServerBssid = _findMatchedServerBssid(
         serverSsids,
         currentBssid: currentBssid,
@@ -563,6 +599,8 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
       final bssidForApi = matchedServerBssid ?? currentBssid;
 
       final status = onOfficeWifi ? 'connected' : 'disconnected';
+        final lastPostedStatus =
+          prefs.getString(Preferences.WIFI_LAST_POLLED_STATUS) ?? '';
       final cachedAttendanceStatus =
           prefs.getString(Preferences.WIFI_SESSION_STATUS) ?? 'none';
 
@@ -625,17 +663,19 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
         log('[WifiAttendance] attendance sync failed, continuing to report status: $e');
       }
 
-      // Report both connected and disconnected states so the backend has the full
-      // presence transition history instead of only seeing office-network joins.
-      await _postWifiStatus(
-        token: token,
-        appUrl: appUrl,
-        status: status,
-        routerBssid: bssidForApi,
-        currentSsid: currentSsid,
-      );
+      if (lastPostedStatus != status) {
+        await _postWifiStatus(
+          token: token,
+          appUrl: appUrl,
+          status: status,
+          routerBssid: bssidForApi,
+          currentSsid: currentSsid,
+        );
 
-      await prefs.setString(Preferences.WIFI_LAST_POLLED_STATUS, status);
+        await prefs.setString(Preferences.WIFI_LAST_POLLED_STATUS, status);
+      } else {
+        log('[WifiAttendance] ↩️ WiFi status unchanged ($status), skipping wifi-status post');
+      }
 
       log('[WifiAttendance] 📤 Poll cycle complete: ✅ APIs called, status=$status, onOffice=$onOfficeWifi, bssid=$bssidForApi');
 

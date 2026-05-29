@@ -39,6 +39,29 @@ class WifiPollingService {
     _pollingTimer = null;
   }
 
+  bool _hasReliableWifiIdentity({
+    required bool hasWifi,
+    required String currentBssid,
+    required String currentSsid,
+  }) {
+    if (!hasWifi) {
+      return false;
+    }
+
+    final normalizedBssid = _normalizeWifiValue(currentBssid);
+    final normalizedSsid = _normalizeWifiValue(currentSsid);
+
+    if (normalizedBssid.isEmpty && normalizedSsid.isEmpty) {
+      return false;
+    }
+
+    if (normalizedBssid == '02:00:00:00:00:00' && normalizedSsid.isEmpty) {
+      return false;
+    }
+
+    return true;
+  }
+
   Future<void> _checkAndSync() async {
     try {
       final connectivityResult = await Connectivity().checkConnectivity();
@@ -55,6 +78,18 @@ class WifiPollingService {
           currentSsid = _normalizeWifiValue(await NetworkInfo().getWifiName());
         } catch (e) {
           log('[WifiPolling] WiFi info read error: $e');
+        }
+        
+        if (isWifiConnected &&
+            !_hasReliableWifiIdentity(
+              hasWifi: isWifiConnected,
+              currentBssid: currentBssid,
+              currentSsid: currentSsid,
+            )) {
+          log(
+            '[WifiPolling] WiFi identity unavailable (BSSID=${currentBssid.isEmpty ? '(empty)' : currentBssid}, SSID=${currentSsid.isEmpty ? '(empty)' : currentSsid}) - skipping this poll cycle',
+          );
+          return;
         }
       }
 
@@ -96,11 +131,20 @@ class WifiPollingService {
         await preferences.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
       }
 
-      await _postWifiStatus(
-        status: isOfficeWifi ? 'connected' : 'disconnected',
-        bssid: bssidForApi,
-        ssid: currentSsid,
-      );
+      final status = isOfficeWifi ? 'connected' : 'disconnected';
+      final lastPostedStatus =
+          preferences.getString(Preferences.WIFI_LAST_POLLED_STATUS) ?? '';
+
+      if (lastPostedStatus != status) {
+        await _postWifiStatus(
+          status: status,
+          bssid: bssidForApi,
+          ssid: currentSsid,
+        );
+        await preferences.setString(Preferences.WIFI_LAST_POLLED_STATUS, status);
+      } else {
+        log('[WifiPolling] WiFi status unchanged ($status), skipping wifi-status post');
+      }
     } catch (e) {
       log('[WifiPolling] Error in _checkAndSync: $e');
     }
@@ -218,7 +262,6 @@ class WifiPollingService {
           'Authorization': 'Bearer $token',
         },
       ).timeout(const Duration(seconds: 6));
-
       log('[WifiPolling] router-ssid API ${response.statusCode}: ${response.body}');
 
       if (response.statusCode != 200) {
