@@ -59,6 +59,7 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:label="N2N HRM"
+        android:allowBackup="false"
         android:enableOnBackInvokedCallback="true"
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true"
