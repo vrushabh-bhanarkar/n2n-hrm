@@ -21,27 +21,15 @@ String _normalizeWifiValue(String? value) {
   return (value ?? '').trim().replaceAll('"', '').toLowerCase();
 }
 
-bool _hasReliableWifiIdentity({
-  required bool hasWifi,
-  required String currentBssid,
-  required String currentSsid,
-}) {
-  if (!hasWifi) {
-    return false;
-  }
+bool _isPlaceholderBssid(String value) {
+  return value.isEmpty || value == '02:00:00:00:00:00';
+}
 
-  final bssid = _normalizeWifiValue(currentBssid);
-  final ssid = _normalizeWifiValue(currentSsid);
-
-  if (bssid.isEmpty && ssid.isEmpty) {
-    return false;
-  }
-
-  if (bssid == '02:00:00:00:00:00' && ssid.isEmpty) {
-    return false;
-  }
-
-  return true;
+bool _isUnknownSsid(String value) {
+  return value.isEmpty ||
+      value == '<unknown ssid>' ||
+      value == 'unknown ssid' ||
+      value == '0x';
 }
 
 bool _isMacAddress(String value) {
@@ -120,23 +108,10 @@ Future<List<dynamic>> _fetchAndCacheServerSsids(
   SharedPreferences prefs,
   String token,
   String appUrl,
-  {bool forceRefresh = false}
 ) async {
   try {
     if (!await _hasNetworkConnection()) {
       return [];
-    }
-
-    if (!forceRefresh) {
-      final cachedSsids = prefs.getString(Preferences.WIFI_SERVER_SSIDS);
-      if (cachedSsids != null && cachedSsids.isNotEmpty) {
-        try {
-          final decoded = jsonDecode(cachedSsids);
-          if (decoded is List && decoded.isNotEmpty) {
-            return decoded;
-          }
-        } catch (_) {}
-      }
     }
 
     final uri = Uri.parse('$appUrl${Constant.ROUTER_SSID_URL}');
@@ -147,8 +122,6 @@ Future<List<dynamic>> _fetchAndCacheServerSsids(
         'Authorization': 'Bearer $token',
       },
     );
-
-    log('[WifiAttendance] router-ssid API ${response.statusCode}: ${response.body}');
 
     if (response.statusCode != 200) {
       return [];
@@ -170,24 +143,6 @@ Future<List<dynamic>> _fetchAndCacheServerSsids(
           .toList();
     }
 
-    if (filtered.isNotEmpty) {
-      log('[WifiAttendance] router-ssid parsed entries: ${filtered.map((item) {
-        if (item is Map) {
-          return {
-            'bssid': item['bssid'],
-            'router_bssid': item['router_bssid'],
-            'router_mac': item['router_mac'],
-            'ssid': item['ssid'],
-            'name': item['name'],
-            'is_active': item['is_active'],
-          };
-        }
-        return item;
-      }).toList()}');
-    } else {
-      log('[WifiAttendance] router-ssid parsed entries: []');
-    }
-
     await prefs.setString(Preferences.WIFI_SERVER_SSIDS, jsonEncode(filtered));
     return filtered;
   } catch (e) {
@@ -196,46 +151,41 @@ Future<List<dynamic>> _fetchAndCacheServerSsids(
   }
 }
 
-String? _findMatchedServerBssid(
-  List<dynamic> serverSsids, {
-  required String? currentBssid,
-  required String? currentSsid,
-}) {
-  final bssidNorm = _normalizeWifiValue(currentBssid);
-  final ssidNorm = _normalizeWifiValue(currentSsid);
-  if (bssidNorm.isEmpty && ssidNorm.isEmpty) return null;
-
-  for (final item in serverSsids) {
-    if (item is Map) {
-      final candidates = _routerCandidates(item);
-      for (final candidate in candidates) {
-        final value = _normalizeWifiValue(candidate?.toString());
-        if (value.isEmpty) continue;
-
-        if (bssidNorm.isNotEmpty && value == bssidNorm) {
-          return value;
-        }
-        if (!_isMacAddress(value) && ssidNorm.isNotEmpty && value == ssidNorm) {
-          return value;
-        }
-      }
-    } else {
-      final value = _normalizeWifiValue(item.toString());
-      if (value.isEmpty) continue;
-
-      if (bssidNorm.isNotEmpty && value == bssidNorm) {
-        return value;
-      }
-      if (!_isMacAddress(value) && ssidNorm.isNotEmpty && value == ssidNorm) {
-        return value;
-      }
-    }
+Map<String, String?> _extractBackendNotification(dynamic payload) {
+  String? pickString(dynamic value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
   }
 
-  return null;
+  if (payload is! Map) return {'title': null, 'content': null};
+
+  final data = payload['data'];
+
+  final title = pickString(payload['notification_title']) ??
+      pickString(payload['title']) ??
+      (data is Map
+          ? (pickString(data['notification_title']) ?? pickString(data['title']))
+          : null);
+
+  final content = pickString(payload['notification_message']) ??
+      pickString(payload['message']) ??
+      pickString(payload['notification']) ??
+      pickString(payload['status_message']) ??
+      (data is Map
+          ? (pickString(data['notification_message']) ??
+              pickString(data['message']) ??
+              pickString(data['notification']) ??
+              pickString(data['status_message']))
+          : null);
+
+  return {
+    'title': title,
+    'content': content,
+  };
 }
 
-Future<void> _postWifiStatus({
+Future<Map<String, String?>> _postWifiStatus({
   required String token,
   required String appUrl,
   required String status,
@@ -250,7 +200,7 @@ Future<void> _postWifiStatus({
       'ssid': currentSsid,
     });
 
-    log('[WifiAttendance] 📮 Sending wifi-status to $uri\\n   Payload: $body');
+    log('[WifiAttendance] 📮 Sending wifi-status to $uri\n   Payload: $body');
     final response = await http
         .post(
           uri,
@@ -261,12 +211,18 @@ Future<void> _postWifiStatus({
           },
           body: body,
         )
-        .timeout(const Duration(seconds: 8));
+        .timeout(const Duration(seconds: 12));
 
     if (response.statusCode == 200) {
-      log('[WifiAttendance] ✅ wifi-status success: 200 - Backend received: $status (will update online_status)');
+      final message = _extractApiMessage(response.body);
+      log('[WifiAttendance] ✅ wifi-status success: 200 - $message (status=$status)');
+      if (_looksLikeJson(response.body)) {
+        final payload = jsonDecode(response.body);
+        return _extractBackendNotification(payload);
+      }
     } else {
-      log('[WifiAttendance] ❌ wifi-status failed: ${response.statusCode} - ${response.body}');
+      final message = _extractApiMessage(response.body);
+      log('[WifiAttendance] ❌ wifi-status failed: ${response.statusCode} - $message (status=$status, bssid=$routerBssid)');
     }
   } on http.ClientException catch (e) {
     log('[WifiAttendance] ❌ wifi-status network error: $e');
@@ -275,24 +231,35 @@ Future<void> _postWifiStatus({
   } catch (e) {
     log('[WifiAttendance] ❌ wifi-status unexpected error: $e');
   }
+
+  return {'title': null, 'content': null};
 }
 
 String _mapAttendanceStatus(dynamic payload) {
   if (payload is! Map) return 'none';
-  final data = payload['data'];
-  if (data is! Map) return 'none';
+  final data = payload['data'] is Map ? payload['data'] as Map : payload;
 
-  final attendance = data['employee_today_attendance'];
-  final attendanceMap = attendance is Map ? attendance : <String, dynamic>{};
+  final rawStatus =
+      data['attendance_status'] ?? data['status'] ?? data['session_status'];
+  final normalized = _normalizeWifiValue(rawStatus?.toString());
+  if (normalized == 'checked_in' ||
+      normalized == 'check_in' ||
+      normalized == 'checkedin') {
+    return data['is_on_break'] == true ? 'on_break' : 'checked_in';
+  }
+  if (normalized == 'checked_out' ||
+      normalized == 'check_out' ||
+      normalized == 'checkedout') {
+    return 'checked_out';
+  }
+  if (normalized == 'on_break' || normalized == 'break') {
+    return 'on_break';
+  }
 
-  final checkedIn = data['checked_in'] == true ||
-      attendanceMap['check_in_at'] != null ||
-      data['check_in_at'] != null;
-  final checkedOut = data['checked_out'] == true ||
-      attendanceMap['check_out_at'] != null ||
-      data['check_out_at'] != null;
-  final onBreak =
-      data['is_on_break'] == true || attendanceMap['is_on_break'] == true;
+  final checkedIn = data['checked_in'] == true || data['check_in_at'] != null;
+  final checkedOut =
+      data['checked_out'] == true || data['check_out_at'] != null;
+  final onBreak = data['is_on_break'] == true;
 
   if (checkedIn && !checkedOut) {
     return onBreak ? 'on_break' : 'checked_in';
@@ -306,38 +273,29 @@ bool _looksLikeJson(String body) {
   return trimmed.startsWith('{') || trimmed.startsWith('[');
 }
 
-Future<({String bssid, String ssid})> _readWifiIdentity(
-    {required bool hasWifi}) async {
-  if (!hasWifi) {
-    return (bssid: '', ssid: '');
-  }
-
-  String bssid = '';
-  String ssid = '';
-  for (final delayMs in [0, 400, 1000]) {
-    if (delayMs > 0) {
-      await Future.delayed(Duration(milliseconds: delayMs));
-    }
-
-    try {
-      bssid = _normalizeWifiValue(await NetworkInfo().getWifiBSSID());
-      ssid = _normalizeWifiValue(await NetworkInfo().getWifiName());
-      if (bssid.isNotEmpty || ssid.isNotEmpty) {
-        break;
-      }
-    } catch (e) {
-      log('[WifiAttendance] wifi info read error: $e');
-    }
-  }
-
-  return (bssid: bssid, ssid: ssid);
+String _truncateForLog(String value, {int max = 200}) {
+  if (value.length <= max) return value;
+  return '${value.substring(0, max)}...';
 }
 
-String _previewResponseBody(String body, [int maxChars = 200]) {
-  if (body.length <= maxChars) {
-    return body;
+String _extractApiMessage(String body) {
+  if (!_looksLikeJson(body)) {
+    return _truncateForLog(body);
   }
-  return body.substring(0, maxChars);
+
+  try {
+    final payload = jsonDecode(body);
+    if (payload is Map) {
+      final message = payload['message']?.toString().trim();
+      if (message != null && message.isNotEmpty) {
+        return message;
+      }
+    }
+  } catch (_) {
+    // Fall back to truncated raw body.
+  }
+
+  return _truncateForLog(body);
 }
 
 Future<String> _fetchAttendanceStatus(
@@ -354,9 +312,9 @@ Future<String> _fetchAttendanceStatus(
         'Accept': 'application/json; charset=UTF-8',
         'Authorization': 'Bearer $token',
       },
-    ).timeout(const Duration(seconds: 8));
+    ).timeout(const Duration(seconds: 12));
 
-    log('[WifiAttendance] 📡 Attendance-status response: ${response.statusCode} - ${_previewResponseBody(response.body)}');
+    log('[WifiAttendance] 📡 Attendance-status response: ${response.statusCode} - ${_truncateForLog(response.body)}');
     if (response.statusCode != 200 || !_looksLikeJson(response.body)) {
       final cached = prefs.getString(Preferences.WIFI_SESSION_STATUS) ?? 'none';
       log('[WifiAttendance] ⚠️ Invalid attendance-status response, using cached: $cached');
@@ -380,7 +338,7 @@ Future<String> _fetchAttendanceStatus(
   }
 }
 
-Future<void> _autoCheckIn(
+Future<bool> _autoCheckIn(
   SharedPreferences prefs, {
   required String token,
   required String appUrl,
@@ -397,38 +355,20 @@ Future<void> _autoCheckIn(
             'Authorization': 'Bearer $token',
           },
           body: jsonEncode({
-            'attendance_type': 'wifi',
-            'attendance_status_type': 'checkIn',
             'auto_checkin': true,
             'latitude': prefs.getDouble('last_latitude') ?? 0.0,
             'longitude': prefs.getDouble('last_longitude') ?? 0.0,
-            'router_ssid': prefs.getString(Preferences.WIFI_OFFICE_SSID) ?? '',
-            'router_bssid':
-                prefs.getString(Preferences.WIFI_OFFICE_BSSID) ?? '',
-            'note': '',
           }),
         )
-        .timeout(const Duration(seconds: 8));
+        .timeout(const Duration(seconds: 12));
 
     if (response.statusCode == 200) {
       await prefs.setString(Preferences.WIFI_SESSION_STATUS, 'checked_in');
-      await prefs.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
-      // Persist today's date so UI gating knows a session exists
-      final now = DateTime.now();
-      final todayStr =
-          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      await prefs.setString(Preferences.WIFI_SESSION_DATE, todayStr);
-      // Persist last matched BSSID for reliable checkout
-      final persistedBssid = prefs.getString(Preferences.WIFI_OFFICE_BSSID) ??
-          prefs.getString(Preferences.WIFI_LAST_MATCHED_BSSID) ??
-          '';
-      if (persistedBssid.isNotEmpty) {
-        await prefs.setString(
-            Preferences.WIFI_LAST_MATCHED_BSSID, persistedBssid);
-      }
-      log('[WifiAttendance] ✅ auto check-in success: ${response.statusCode} (date=$todayStr, bssid=$persistedBssid)');
+      log('[WifiAttendance] ✅ auto check-in success: ${response.statusCode}');
+      return true;
     } else {
       log('[WifiAttendance] ❌ auto check-in failed: ${response.statusCode} - ${response.body}');
+      return false;
     }
   } on http.ClientException catch (e) {
     log('[WifiAttendance] ❌ auto check-in network error: $e');
@@ -437,6 +377,14 @@ Future<void> _autoCheckIn(
   } catch (e) {
     log('[WifiAttendance] ❌ auto check-in error: $e');
   }
+
+  return false;
+}
+
+bool _shouldAttemptAutoCheckIn(String attendanceStatus) {
+  // `checked_out` can happen after an auto checkout while user is still on office WiFi.
+  // Allow re-checkin attempt so approved-break flows do not stay stuck until manual action.
+  return attendanceStatus == 'none' || attendanceStatus == 'checked_out';
 }
 
 Future<void> _autoCheckOut(
@@ -456,29 +404,17 @@ Future<void> _autoCheckOut(
             'Authorization': 'Bearer $token',
           },
           body: jsonEncode({
-            'attendance_type': 'wifi',
-            'attendance_status_type': 'checkOut',
             'auto_checkout': true,
             'latitude': prefs.getDouble('last_latitude') ?? 0.0,
             'longitude': prefs.getDouble('last_longitude') ?? 0.0,
-            'router_ssid': prefs.getString(Preferences.WIFI_OFFICE_SSID) ?? '',
-            'router_bssid':
-                prefs.getString(Preferences.WIFI_OFFICE_BSSID) ?? '',
             'break_reason': 'WiFi disconnection exceeded threshold',
-            'note': '',
           }),
         )
-        .timeout(const Duration(seconds: 8));
+        .timeout(const Duration(seconds: 12));
 
     if (response.statusCode == 200) {
       await prefs.setString(Preferences.WIFI_SESSION_STATUS, 'checked_out');
-      await prefs.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
-      // Persist today's date so UI gating knows a session exists
-      final now = DateTime.now();
-      final todayStr =
-          '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      await prefs.setString(Preferences.WIFI_SESSION_DATE, todayStr);
-      log('[WifiAttendance] ✅ auto check-out success: ${response.statusCode} (date=$todayStr)');
+      log('[WifiAttendance] ✅ auto check-out success: ${response.statusCode}');
     } else {
       log('[WifiAttendance] ❌ auto check-out failed: ${response.statusCode} - ${response.body}');
     }
@@ -497,6 +433,9 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
   Timer? debounceTimer;
   bool isChecking = false;
   DateTime? lastDisconnectedAt;
+  DateTime? lastAutoCheckInAttemptAt;
+  String? lastForegroundNotificationTitle;
+  String? lastForegroundNotificationContent;
 
   Future<void> checkAndSyncWifiStatus() async {
     if (isChecking) return;
@@ -542,140 +481,126 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
       final connectivityResults = await Connectivity().checkConnectivity();
       final hasWifi = connectivityResults.contains(ConnectivityResult.wifi);
 
-      final wifiIdentity = await _readWifiIdentity(hasWifi: hasWifi);
-      String currentBssid = wifiIdentity.bssid;
-      String currentSsid = wifiIdentity.ssid;
-
-      final hasReliableWifiIdentity = _hasReliableWifiIdentity(
-        hasWifi: hasWifi,
-        currentBssid: currentBssid,
-        currentSsid: currentSsid,
-      );
-
-      if (hasWifi && !hasReliableWifiIdentity) {
-        log(
-          '[WifiAttendance] WiFi identity unavailable (BSSID=${currentBssid.isEmpty ? '(empty)' : currentBssid}, SSID=${currentSsid.isEmpty ? '(empty)' : currentSsid}) - skipping this poll cycle',
-        );
-        return;
+      String currentBssid = '';
+      String currentSsid = '';
+      if (hasWifi) {
+        try {
+          currentBssid =
+              _normalizeWifiValue(await NetworkInfo().getWifiBSSID());
+          currentSsid = _normalizeWifiValue(await NetworkInfo().getWifiName());
+        } catch (e) {
+          log('[WifiAttendance] wifi info read error: $e');
+        }
       }
 
-      var matchedServerBssid = _findMatchedServerBssid(
-        serverSsids,
-        currentBssid: currentBssid,
-        currentSsid: currentSsid,
+      final fallbackBssid = _normalizeWifiValue(
+        prefs.getString(Preferences.WIFI_LAST_MATCHED_BSSID) ??
+            prefs.getString(Preferences.WIFI_OFFICE_BSSID),
       );
 
-      if (hasWifi && matchedServerBssid == null && serverSsids.isNotEmpty) {
-        final refreshedSsids = await _fetchAndCacheServerSsids(
-          prefs,
-          token,
-          appUrl,
-          forceRefresh: true,
-        );
-        if (refreshedSsids.isNotEmpty) {
-          serverSsids = refreshedSsids;
-          matchedServerBssid = _findMatchedServerBssid(
+      bool onOfficeWifi = hasWifi &&
+          serverSsids.isNotEmpty &&
+          _matchesOfficeWifi(
             serverSsids,
             currentBssid: currentBssid,
             currentSsid: currentSsid,
           );
-        }
+
+      // In background, Android may return placeholder BSSID/SSID even when still on WiFi.
+      // Fall back to last matched office BSSID to avoid false "disconnected" polls.
+      if (!onOfficeWifi &&
+          hasWifi &&
+          serverSsids.isNotEmpty &&
+          _isPlaceholderBssid(currentBssid) &&
+          _isUnknownSsid(currentSsid) &&
+          fallbackBssid.isNotEmpty &&
+          _matchesOfficeWifi(
+            serverSsids,
+            currentBssid: fallbackBssid,
+            currentSsid: '',
+          )) {
+        onOfficeWifi = true;
+        currentBssid = fallbackBssid;
+        log('[WifiAttendance] using fallback office BSSID in background: $fallbackBssid');
       }
 
-      final onOfficeWifi = hasWifi && matchedServerBssid != null;
-
-      if (!onOfficeWifi) {
-        log(
-          '[WifiAttendance] WiFi mismatch: currentBSSID=${currentBssid.isEmpty ? '(empty)' : currentBssid}, currentSSID=${currentSsid.isEmpty ? '(empty)' : currentSsid}, cachedAuthorizedCount=${serverSsids.length}',
-        );
-      }
-
-      if (onOfficeWifi && matchedServerBssid != null) {
+      if (onOfficeWifi && currentBssid.isNotEmpty) {
         await prefs.setString(
-            Preferences.WIFI_LAST_MATCHED_BSSID, matchedServerBssid);
-        await prefs.setString(Preferences.WIFI_OFFICE_BSSID, matchedServerBssid);
+            Preferences.WIFI_LAST_MATCHED_BSSID, currentBssid);
+        await prefs.setString(Preferences.WIFI_OFFICE_BSSID, currentBssid);
       }
 
-      final bssidForApi = matchedServerBssid ?? currentBssid;
+      final effectiveCurrentBssid =
+          _isPlaceholderBssid(currentBssid) ? '' : currentBssid;
+      final bssidForApi = onOfficeWifi
+          ? (effectiveCurrentBssid.isNotEmpty
+              ? effectiveCurrentBssid
+              : fallbackBssid)
+          : (fallbackBssid.isNotEmpty ? fallbackBssid : effectiveCurrentBssid);
 
       final status = onOfficeWifi ? 'connected' : 'disconnected';
-        final lastPostedStatus =
-          prefs.getString(Preferences.WIFI_LAST_POLLED_STATUS) ?? '';
-      final cachedAttendanceStatus =
-          prefs.getString(Preferences.WIFI_SESSION_STATUS) ?? 'none';
 
-      String attendanceStatus = cachedAttendanceStatus;
-      try {
-        // Sync current attendance session from server and drive auto check-in/out by polling.
-        log('[WifiAttendance] ⏳ Fetching attendance status (onOfficeWifi=$onOfficeWifi, status=$status)...');
-        attendanceStatus = await _fetchAttendanceStatus(
-          prefs,
-          token: token,
-          appUrl: appUrl,
-        ).timeout(
-          const Duration(seconds: 3),
-          onTimeout: () {
-            log(
-              '[WifiAttendance] ⏱️ attendance-status slow, using cached: $cachedAttendanceStatus',
-            );
-            return cachedAttendanceStatus;
-          },
-        );
-        log('[WifiAttendance] 📊 Attendance status: $attendanceStatus');
+      // Sync current attendance session from server and drive auto check-in/out by polling.
+      log('[WifiAttendance] ⏳ Fetching attendance status (onOfficeWifi=$onOfficeWifi, status=$status)...');
+      final attendanceStatus = await _fetchAttendanceStatus(
+        prefs,
+        token: token,
+        appUrl: appUrl,
+      );
+      log('[WifiAttendance] 📊 Attendance status: $attendanceStatus');
 
-        if (onOfficeWifi) {
-          lastDisconnectedAt = null;
-          await prefs.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
-          if (attendanceStatus == 'none') {
-            log('[WifiAttendance] ✅ On office WiFi + status=none → triggering auto check-in');
-            await _autoCheckIn(prefs, token: token, appUrl: appUrl);
+      if (onOfficeWifi) {
+        lastDisconnectedAt = null;
+        if (_shouldAttemptAutoCheckIn(attendanceStatus)) {
+          final canRetryNow = lastAutoCheckInAttemptAt == null ||
+              DateTime.now().difference(lastAutoCheckInAttemptAt!) >=
+                  const Duration(seconds: 8);
+          if (canRetryNow) {
+            lastAutoCheckInAttemptAt = DateTime.now();
+            log('[WifiAttendance] ✅ On office WiFi + status=$attendanceStatus → triggering auto check-in');
+            final didCheckIn =
+                await _autoCheckIn(prefs, token: token, appUrl: appUrl);
+            if (didCheckIn) {
+              await _fetchAttendanceStatus(
+                prefs,
+                token: token,
+                appUrl: appUrl,
+              );
+            }
           } else {
-            log('[WifiAttendance] ℹ️ On office WiFi but status=$attendanceStatus (not checking in)');
+            log('[WifiAttendance] ⏳ Skipping auto check-in retry: waiting for short retry window');
           }
         } else {
-          if (attendanceStatus == 'checked_in' ||
-              attendanceStatus == 'on_break') {
-            final persistedDisconnect =
-                prefs.getString(Preferences.WIFI_LAST_DISCONNECT_TIME) ?? '';
-            if (persistedDisconnect.isNotEmpty) {
-              lastDisconnectedAt ??= DateTime.tryParse(persistedDisconnect);
-            }
-
-            lastDisconnectedAt ??= DateTime.now();
-            await prefs.setString(
-              Preferences.WIFI_LAST_DISCONNECT_TIME,
-              lastDisconnectedAt!.toIso8601String(),
-            );
-            final disconnectedFor =
-                DateTime.now().difference(lastDisconnectedAt!);
-            log('[WifiAttendance] 📍 Off WiFi + checked_in: disconnected for ${disconnectedFor.inMinutes}min (threshold: 15min)');
-            if (disconnectedFor >= const Duration(minutes: 15)) {
-              log('[WifiAttendance] ⏱️ 15-minute threshold reached → triggering auto check-out');
-              await _autoCheckOut(prefs, token: token, appUrl: appUrl);
-            }
-          } else {
-            log('[WifiAttendance] ℹ️ Off WiFi but status=$attendanceStatus (not checking out)');
-            lastDisconnectedAt = null;
-            await prefs.setString(Preferences.WIFI_LAST_DISCONNECT_TIME, '');
-          }
+          log('[WifiAttendance] ℹ️ On office WiFi but status=$attendanceStatus (not checking in)');
         }
-      } catch (e) {
-        log('[WifiAttendance] attendance sync failed, continuing to report status: $e');
-      }
-
-      if (lastPostedStatus != status) {
-        await _postWifiStatus(
-          token: token,
-          appUrl: appUrl,
-          status: status,
-          routerBssid: bssidForApi,
-          currentSsid: currentSsid,
-        );
-
-        await prefs.setString(Preferences.WIFI_LAST_POLLED_STATUS, status);
       } else {
-        log('[WifiAttendance] ↩️ WiFi status unchanged ($status), skipping wifi-status post');
+        lastAutoCheckInAttemptAt = null;
+        if (attendanceStatus == 'checked_in') {
+          lastDisconnectedAt ??= DateTime.now();
+          final disconnectedFor =
+              DateTime.now().difference(lastDisconnectedAt!);
+          log('[WifiAttendance] 📍 Off WiFi + checked_in: disconnected for ${disconnectedFor.inMinutes}min (threshold: 15min)');
+          if (disconnectedFor >= const Duration(minutes: 15)) {
+            log('[WifiAttendance] ⏱️ 15-minute threshold reached → triggering auto check-out');
+            await _autoCheckOut(prefs, token: token, appUrl: appUrl);
+          }
+        } else {
+          log('[WifiAttendance] ℹ️ Off WiFi but status=$attendanceStatus (not checking out)');
+          lastDisconnectedAt = null;
+        }
       }
+
+      // KEY POINT: ALWAYS call _postWifiStatus every 30 seconds, regardless of change.
+      // The backend API handles duplicates correctly and just updates reconnected_at.
+      final backendNotification = await _postWifiStatus(
+        token: token,
+        appUrl: appUrl,
+        status: status,
+        routerBssid: bssidForApi,
+        currentSsid: currentSsid,
+      );
+
+      await prefs.setString(Preferences.WIFI_LAST_POLLED_STATUS, status);
 
       log('[WifiAttendance] 📤 Poll cycle complete: ✅ APIs called, status=$status, onOffice=$onOfficeWifi, bssid=$bssidForApi');
 
@@ -686,12 +611,21 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
       });
 
       if (service is AndroidServiceInstance) {
-        service.setForegroundNotificationInfo(
-          title: 'WiFi Attendance Active',
-          content: onOfficeWifi
-              ? 'Connected to office WiFi - auto check-in active'
-              : 'Not on office WiFi - monitoring for auto check-out',
-        );
+        final nextNotificationTitle = (backendNotification['title'] ?? '').trim();
+        final nextNotificationContent =
+            (backendNotification['content'] ?? '').trim();
+
+        // Backend-driven notifications only. If backend sends nothing, do not update.
+        if (nextNotificationContent.isNotEmpty &&
+            (nextNotificationTitle != lastForegroundNotificationTitle ||
+                nextNotificationContent != lastForegroundNotificationContent)) {
+          service.setForegroundNotificationInfo(
+            title: nextNotificationTitle,
+            content: nextNotificationContent,
+          );
+          lastForegroundNotificationTitle = nextNotificationTitle;
+          lastForegroundNotificationContent = nextNotificationContent;
+        }
       }
     } catch (e) {
       log('[WifiAttendance] checkAndSyncWifiStatus error: $e');
@@ -746,11 +680,11 @@ class WifiAttendanceService {
       androidConfiguration: AndroidConfiguration(
         onStart: wifiAttendanceServiceMain,
         autoStart: false,
-        autoStartOnBoot: false,
+        autoStartOnBoot: true,
         isForegroundMode: true,
         notificationChannelId: _kWifiAttendanceChannelId,
-        initialNotificationTitle: 'WiFi Attendance Active',
-        initialNotificationContent: 'Monitoring office WiFi',
+        initialNotificationTitle: '',
+        initialNotificationContent: '',
         foregroundServiceNotificationId: _kForegroundNotifId,
         foregroundServiceTypes: [AndroidForegroundType.dataSync],
       ),
