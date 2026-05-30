@@ -5,7 +5,9 @@ import 'dart:io';
 
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/utils/constant.dart';
+import 'package:cnattendance/utils/office_geofence.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -106,21 +108,54 @@ Future<bool> _hasNetworkConnection() async {
 }
 
 Future<bool> _hasRecentLocationFix(SharedPreferences prefs) async {
-  final latitude = prefs.getDouble('last_latitude') ?? 0.0;
-  final longitude = prefs.getDouble('last_longitude') ?? 0.0;
-  if (latitude == 0.0 && longitude == 0.0) {
+  try {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return false;
+    }
+
+    final permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return false;
+    }
+
+    final position = await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        timeLimit: Duration(seconds: 8),
+      ),
+    );
+
+    if (!OfficeGeofence.isAcceptableOfficePosition(position)) {
+      await prefs.remove(Preferences.WIFI_APPROVED_LOCATION_LAT);
+      await prefs.remove(Preferences.WIFI_APPROVED_LOCATION_LONG);
+      await prefs.remove(Preferences.WIFI_APPROVED_LOCATION_ACCURACY);
+      await prefs.remove(Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS);
+      return false;
+    }
+
+    await prefs.setDouble(
+      Preferences.WIFI_APPROVED_LOCATION_LAT,
+      position.latitude,
+    );
+    await prefs.setDouble(
+      Preferences.WIFI_APPROVED_LOCATION_LONG,
+      position.longitude,
+    );
+    await prefs.setDouble(
+      Preferences.WIFI_APPROVED_LOCATION_ACCURACY,
+      position.accuracy,
+    );
+    await prefs.setInt(
+      Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS,
+      DateTime.now().millisecondsSinceEpoch,
+    );
+
+    return true;
+  } catch (_) {
     return false;
   }
-
-  final lastUpdateMs =
-      prefs.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
-  if (lastUpdateMs <= 0) {
-    return false;
-  }
-
-  final lastUpdate = DateTime.fromMillisecondsSinceEpoch(lastUpdateMs);
-  return DateTime.now().difference(lastUpdate) <=
-      _kAutoCheckInLocationFreshness;
 }
 
 Future<List<dynamic>> _fetchAndCacheServerSsids(
@@ -380,8 +415,8 @@ Future<bool> _autoCheckIn(
           },
           body: jsonEncode({
             'auto_checkin': true,
-            'latitude': prefs.getDouble('last_latitude') ?? 0.0,
-            'longitude': prefs.getDouble('last_longitude') ?? 0.0,
+            'latitude': prefs.getDouble(Preferences.WIFI_APPROVED_LOCATION_LAT) ?? 0.0,
+            'longitude': prefs.getDouble(Preferences.WIFI_APPROVED_LOCATION_LONG) ?? 0.0,
           }),
         )
         .timeout(const Duration(seconds: 12));

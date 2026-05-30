@@ -56,7 +56,7 @@ class AttendanceScreenState extends State<AttendanceScreen> {
               return loadAttendanceReport();
             },
             child: SingleChildScrollView(
-              physics: AlwaysScrollableScrollPhysics(),
+              physics: const AlwaysScrollableScrollPhysics(),
               child: Container(
                 width: double.infinity,
                 child: Column(

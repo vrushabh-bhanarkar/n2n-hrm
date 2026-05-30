@@ -29,6 +29,11 @@ class Constant {
       "/api/employees/attendance-status";
   static const SEND_LOCATION = "/api/users/location";
 
+  static const double OFFICE_LATITUDE = 27.6810411;
+  static const double OFFICE_LONGITUDE = 85.3340921;
+  static const double OFFICE_GEOFENCE_RADIUS_METERS = 1000;
+  static const double OFFICE_LOCATION_MAX_ACCURACY_METERS = 100;
+
   // WiFi Auto Attendance (Router APIs)
   static const ROUTER_SSID_URL = "/api/router/ssid";
   static const WIFI_STATUS_URL = "/api/employees/wifi-status";

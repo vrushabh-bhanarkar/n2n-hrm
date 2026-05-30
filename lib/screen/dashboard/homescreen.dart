@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:developer';
 
+import 'package:cnattendance/utils/office_geofence.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:cnattendance/data/source/datastore/preferences.dart';
@@ -250,6 +251,32 @@ class HomeScreenState extends State<HomeScreen> {
         Preferences.WIFI_LAST_LOCATION_UPDATE_MS,
         DateTime.now().millisecondsSinceEpoch,
       );
+
+      if (OfficeGeofence.isAcceptableOfficePosition(position)) {
+        await sharedPreferences.setDouble(
+          Preferences.WIFI_APPROVED_LOCATION_LAT,
+          position.latitude,
+        );
+        await sharedPreferences.setDouble(
+          Preferences.WIFI_APPROVED_LOCATION_LONG,
+          position.longitude,
+        );
+        await sharedPreferences.setDouble(
+          Preferences.WIFI_APPROVED_LOCATION_ACCURACY,
+          position.accuracy,
+        );
+        await sharedPreferences.setInt(
+          Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS,
+          DateTime.now().millisecondsSinceEpoch,
+        );
+      } else {
+        await sharedPreferences.remove(Preferences.WIFI_APPROVED_LOCATION_LAT);
+        await sharedPreferences.remove(Preferences.WIFI_APPROVED_LOCATION_LONG);
+        await sharedPreferences.remove(
+            Preferences.WIFI_APPROVED_LOCATION_ACCURACY);
+        await sharedPreferences.remove(
+            Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS);
+      }
     } catch (e) {
       print(e);
       showToast(e.toString());
@@ -436,19 +463,28 @@ class HomeScreenState extends State<HomeScreen> {
       _resolveAutoCheckInCoordinates() async {
     try {
       final provider = Provider.of<DashboardProvider>(context, listen: false);
-      final cachedLatitude = provider.locationStatus['latitude'] ?? 0.0;
-      final cachedLongitude = provider.locationStatus['longitude'] ?? 0.0;
-      if (cachedLatitude != 0.0 && cachedLongitude != 0.0) {
-        final sp = await SharedPreferences.getInstance();
-        final lastUpdateMs =
-            sp.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
-        if (lastUpdateMs > 0 &&
-            DateTime.now().difference(
-                  DateTime.fromMillisecondsSinceEpoch(lastUpdateMs),
-                ) <=
-                _kAutoCheckInLocationFreshness) {
-          return (cachedLatitude, cachedLongitude);
-        }
+      final sp = await SharedPreferences.getInstance();
+      final approvedLatitude =
+          sp.getDouble(Preferences.WIFI_APPROVED_LOCATION_LAT) ?? 0.0;
+      final approvedLongitude =
+          sp.getDouble(Preferences.WIFI_APPROVED_LOCATION_LONG) ?? 0.0;
+      final approvedAccuracy =
+          sp.getDouble(Preferences.WIFI_APPROVED_LOCATION_ACCURACY) ?? 0.0;
+      final approvedAtMs =
+          sp.getInt(Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS) ?? 0;
+
+      if (approvedLatitude != 0.0 &&
+          approvedLongitude != 0.0 &&
+          approvedAccuracy > 0 &&
+          approvedAccuracy <= Constant.OFFICE_LOCATION_MAX_ACCURACY_METERS &&
+          approvedAtMs > 0 &&
+          DateTime.now().difference(
+                DateTime.fromMillisecondsSinceEpoch(approvedAtMs),
+              ) <=
+              _kAutoCheckInLocationFreshness &&
+          OfficeGeofence.isWithinOfficeRadius(
+              approvedLatitude, approvedLongitude)) {
+        return (approvedLatitude, approvedLongitude);
       }
     } catch (_) {}
 
@@ -678,37 +714,37 @@ class HomeScreenState extends State<HomeScreen> {
       decoration: RadialDecoration(),
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        body: FocusDetector(
-          onFocusGained: () {
-            loadDashboard();
-          },
-          child: RefreshIndicator(
-            triggerMode: RefreshIndicatorTriggerMode.onEdge,
-            color: Colors.white,
-            backgroundColor: Colors.blueGrey,
-            edgeOffset: 50,
-            onRefresh: () {
-              return loadDashboard();
+        body: SafeArea(
+          child: FocusDetector(
+            onFocusGained: () {
+              loadDashboard();
             },
-            child: SafeArea(
-                child: SingleChildScrollView(
-              child: Container(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    HeaderProfile(),
-                    CheckAttendance(),
-                    OverviewDashboard(controller),
-                    UpcomingHoliday(),
-                    if (features["award"] == "1") RecentAward(),
-                    if (features["event"] == "1") RecentEvent(),
-                    if (features["training"] == "1") RecentTraining(),
-                    WeeklyReportChart(),
-                    MyTeam()
-                  ],
+            child: RefreshIndicator(
+              triggerMode: RefreshIndicatorTriggerMode.onEdge,
+              color: Colors.white,
+              onRefresh: () async {
+                await loadDashboard();
+              },
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Container(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      HeaderProfile(),
+                      CheckAttendance(),
+                      OverviewDashboard(controller),
+                      UpcomingHoliday(),
+                      if (features["award"] == "1") RecentAward(),
+                      if (features["event"] == "1") RecentEvent(),
+                      if (features["training"] == "1") RecentTraining(),
+                      WeeklyReportChart(),
+                      MyTeam()
+                    ],
+                  ),
                 ),
               ),
-            )),
+            ),
           ),
         ),
       ),

@@ -51,34 +51,19 @@ class LocationStatus {
             headingAccuracy: 0);
       }*/
 
-      final LocationSettings locationSettings = workspace == "1"
-          ? const LocationSettings(
-              accuracy: LocationAccuracy.medium,
-              distanceFilter: 100,
-            )
-          : const LocationSettings(
-              accuracy: LocationAccuracy.high,
-              timeLimit: Duration(seconds: 10),
-              distanceFilter: 100,
-            );
+      final LocationSettings locationSettings = const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        timeLimit: Duration(seconds: 10),
+        distanceFilter: 100,
+      );
 
       try {
         return await Geolocator.getCurrentPosition(
             locationSettings: locationSettings);
       } on TimeoutException {
-        final lastKnown = await Geolocator.getLastKnownPosition();
-        if (lastKnown != null) {
-          return lastKnown;
-        }
-
         return Future.error(
             'Location fix timed out. Please wait a moment, then try again after enabling GPS and moving to an open area.');
       } catch (e) {
-        final lastKnown = await Geolocator.getLastKnownPosition();
-        if (lastKnown != null) {
-          return lastKnown;
-        }
-
         print(e.toString());
         return Future.error(
             'Location can not be found. Please check GPS, permissions, and try again.');

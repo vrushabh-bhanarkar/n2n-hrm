@@ -61,6 +61,14 @@ class Preferences with ChangeNotifier {
   static const String WIFI_SESSION_STATUS = "wifi_auto_session_status";
   static const String WIFI_LAST_LOCATION_UPDATE_MS =
       "wifi_last_location_update_ms";
+    static const String WIFI_APPROVED_LOCATION_LAT =
+      "wifi_approved_location_lat";
+    static const String WIFI_APPROVED_LOCATION_LONG =
+      "wifi_approved_location_long";
+    static const String WIFI_APPROVED_LOCATION_ACCURACY =
+      "wifi_approved_location_accuracy";
+    static const String WIFI_APPROVED_LOCATION_UPDATE_MS =
+      "wifi_approved_location_update_ms";
 
   // WiFi Break Tracking
   static const String WIFI_FIRST_CHECKIN_TIME = "wifi_first_checkin_time";

@@ -22,6 +22,7 @@ import 'package:cnattendance/model/holiday.dart';
 import 'package:cnattendance/services/presence_sync_service.dart';
 import 'package:cnattendance/utils/constant.dart';
 import 'package:cnattendance/utils/locationstatus.dart';
+import 'package:cnattendance/utils/office_geofence.dart';
 import 'package:cnattendance/utils/wifiinfo.dart';
 import 'package:cnattendance/utils/api_response_handler.dart';
 import 'package:cnattendance/utils/http_client.dart';
@@ -572,9 +573,35 @@ class DashboardProvider with ChangeNotifier {
       locationStatus.update('latitude', (value) => position.latitude);
       locationStatus.update('longitude', (value) => position.longitude);
 
+      if (!OfficeGeofence.isAcceptableOfficePosition(position)) {
+        final distanceMeters = OfficeGeofence.distanceFromOfficeMeters(
+          position.latitude,
+          position.longitude,
+        );
+        throw position.accuracy > Constant.OFFICE_LOCATION_MAX_ACCURACY_METERS
+            ? 'Location accuracy is too low (${position.accuracy.toStringAsFixed(0)}m). Move to an open area and try again.'
+            : 'You are outside the office range (${distanceMeters.toStringAsFixed(0)}m away).';
+      }
+
       if (locationStatus['latitude'] != 0.0 &&
           locationStatus['longitude'] != 0.0) {
         final sp = await SharedPreferences.getInstance();
+        await sp.setDouble(
+          Preferences.WIFI_APPROVED_LOCATION_LAT,
+          position.latitude,
+        );
+        await sp.setDouble(
+          Preferences.WIFI_APPROVED_LOCATION_LONG,
+          position.longitude,
+        );
+        await sp.setDouble(
+          Preferences.WIFI_APPROVED_LOCATION_ACCURACY,
+          position.accuracy,
+        );
+        await sp.setInt(
+          Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS,
+          DateTime.now().millisecondsSinceEpoch,
+        );
         await sp.setInt(
           Preferences.WIFI_LAST_LOCATION_UPDATE_MS,
           DateTime.now().millisecondsSinceEpoch,

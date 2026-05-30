@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/utils/constant.dart';
+import 'package:cnattendance/utils/office_geofence.dart';
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
@@ -53,23 +54,40 @@ class PresenceSyncService {
         try {
           position = await Geolocator.getCurrentPosition(
             locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.medium,
+              accuracy: LocationAccuracy.high,
               timeLimit: Duration(seconds: 5),
             ),
           );
-        } catch (_) {
-          position = await Geolocator.getLastKnownPosition();
-        }
+        } catch (_) {}
 
         if (position != null) {
           latitude = position.latitude;
           longitude = position.longitude;
           await storage.setDouble('last_latitude', latitude);
           await storage.setDouble('last_longitude', longitude);
-          await storage.setInt(
-            Preferences.WIFI_LAST_LOCATION_UPDATE_MS,
-            DateTime.now().millisecondsSinceEpoch,
-          );
+          if (OfficeGeofence.isAcceptableOfficePosition(position)) {
+            await storage.setDouble(
+              Preferences.WIFI_APPROVED_LOCATION_LAT,
+              position.latitude,
+            );
+            await storage.setDouble(
+              Preferences.WIFI_APPROVED_LOCATION_LONG,
+              position.longitude,
+            );
+            await storage.setDouble(
+              Preferences.WIFI_APPROVED_LOCATION_ACCURACY,
+              position.accuracy,
+            );
+            await storage.setInt(
+              Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS,
+              DateTime.now().millisecondsSinceEpoch,
+            );
+          } else {
+            await storage.remove(Preferences.WIFI_APPROVED_LOCATION_LAT);
+            await storage.remove(Preferences.WIFI_APPROVED_LOCATION_LONG);
+            await storage.remove(Preferences.WIFI_APPROVED_LOCATION_ACCURACY);
+            await storage.remove(Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS);
+          }
         }
       }
     } catch (_) {

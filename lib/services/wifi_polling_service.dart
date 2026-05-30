@@ -4,7 +4,9 @@ import 'dart:developer';
 
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/utils/constant.dart';
+import 'package:cnattendance/utils/office_geofence.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
@@ -238,17 +240,54 @@ class WifiPollingService {
 
   Future<void> _autoCheckIn() async {
     try {
-      final lastLocationUpdateMs =
-          preferences.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
-      final hasFreshLocation = lastLocationUpdateMs > 0 &&
-          DateTime.now().difference(
-                DateTime.fromMillisecondsSinceEpoch(lastLocationUpdateMs),
-              ) <=
-              _locationFreshness;
-      if (!hasFreshLocation) {
-        log('[WifiPolling] Skipping auto check-in: location fix is stale or unavailable');
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        log('[WifiPolling] Skipping auto check-in: location service is disabled');
         return;
       }
+
+      final permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        log('[WifiPolling] Skipping auto check-in: location permission unavailable');
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 8),
+        ),
+      );
+
+      if (!OfficeGeofence.isAcceptableOfficePosition(position)) {
+        await preferences.remove(Preferences.WIFI_APPROVED_LOCATION_LAT);
+        await preferences.remove(Preferences.WIFI_APPROVED_LOCATION_LONG);
+        await preferences.remove(Preferences.WIFI_APPROVED_LOCATION_ACCURACY);
+        await preferences.remove(Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS);
+        log('[WifiPolling] Skipping auto check-in: fresh location is not inside office geofence');
+        return;
+      }
+
+      await preferences.setDouble(
+        Preferences.WIFI_APPROVED_LOCATION_LAT,
+        position.latitude,
+      );
+      await preferences.setDouble(
+        Preferences.WIFI_APPROVED_LOCATION_LONG,
+        position.longitude,
+      );
+      await preferences.setDouble(
+        Preferences.WIFI_APPROVED_LOCATION_ACCURACY,
+        position.accuracy,
+      );
+      await preferences.setInt(
+        Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS,
+        DateTime.now().millisecondsSinceEpoch,
+      );
+
+      final latitude = position.latitude;
+      final longitude = position.longitude;
 
       final uri = Uri.parse('$baseUrl${Constant.CHECK_IN_URL}');
       final response = await http.post(
@@ -259,8 +298,8 @@ class WifiPollingService {
           'Authorization': 'Bearer $token',
         },
         body: jsonEncode({
-          'latitude': preferences.getDouble('last_latitude') ?? 0.0,
-          'longitude': preferences.getDouble('last_longitude') ?? 0.0,
+          'latitude': latitude,
+          'longitude': longitude,
           'auto_checkin': true,
         }),
       ).timeout(const Duration(seconds: 10));
