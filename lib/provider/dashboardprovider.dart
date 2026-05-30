@@ -34,6 +34,7 @@ import 'package:http/http.dart' as http;
 import 'package:cnattendance/utils/logging_middleware.dart';
 import 'package:intl/intl.dart';
 import 'package:nepali_date_picker/nepali_date_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const String _kInternetConnectionMessage =
     'Please check your internet connection';
@@ -573,6 +574,11 @@ class DashboardProvider with ChangeNotifier {
 
       if (locationStatus['latitude'] != 0.0 &&
           locationStatus['longitude'] != 0.0) {
+        final sp = await SharedPreferences.getInstance();
+        await sp.setInt(
+          Preferences.WIFI_LAST_LOCATION_UPDATE_MS,
+          DateTime.now().millisecondsSinceEpoch,
+        );
         return true;
       } else {
         Future.error(

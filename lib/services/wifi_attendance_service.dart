@@ -16,6 +16,7 @@ import 'package:http/http.dart' as http;
 const String _kWifiAttendanceChannelId = 'wifi_attendance_channel';
 const String _kWifiAttendanceChannelName = 'WiFi Auto Attendance';
 const int _kForegroundNotifId = 888;
+const Duration _kAutoCheckInLocationFreshness = Duration(minutes: 10);
 
 String _normalizeWifiValue(String? value) {
   return (value ?? '').trim().replaceAll('"', '').toLowerCase();
@@ -102,6 +103,24 @@ Future<bool> _hasNetworkConnection() async {
   } catch (_) {
     return false;
   }
+}
+
+Future<bool> _hasRecentLocationFix(SharedPreferences prefs) async {
+  final latitude = prefs.getDouble('last_latitude') ?? 0.0;
+  final longitude = prefs.getDouble('last_longitude') ?? 0.0;
+  if (latitude == 0.0 && longitude == 0.0) {
+    return false;
+  }
+
+  final lastUpdateMs =
+      prefs.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
+  if (lastUpdateMs <= 0) {
+    return false;
+  }
+
+  final lastUpdate = DateTime.fromMillisecondsSinceEpoch(lastUpdateMs);
+  return DateTime.now().difference(lastUpdate) <=
+      _kAutoCheckInLocationFreshness;
 }
 
 Future<List<dynamic>> _fetchAndCacheServerSsids(
@@ -344,6 +363,11 @@ Future<bool> _autoCheckIn(
   required String appUrl,
 }) async {
   try {
+    if (!await _hasRecentLocationFix(prefs)) {
+      log('[WifiAttendance] ⏭️ Skipping auto check-in: location fix is stale or unavailable');
+      return false;
+    }
+
     log('[WifiAttendance] 🔄 Attempting auto check-in to $appUrl${Constant.CHECK_IN_URL}');
     final uri = Uri.parse('$appUrl${Constant.CHECK_IN_URL}');
     final response = await http

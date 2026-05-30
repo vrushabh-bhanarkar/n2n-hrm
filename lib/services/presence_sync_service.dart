@@ -66,6 +66,10 @@ class PresenceSyncService {
           longitude = position.longitude;
           await storage.setDouble('last_latitude', latitude);
           await storage.setDouble('last_longitude', longitude);
+          await storage.setInt(
+            Preferences.WIFI_LAST_LOCATION_UPDATE_MS,
+            DateTime.now().millisecondsSinceEpoch,
+          );
         }
       }
     } catch (_) {

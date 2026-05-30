@@ -12,6 +12,7 @@ import 'package:http/http.dart' as http;
 class WifiPollingService {
   static const Duration _pollingInterval = Duration(seconds: 30);
   static const Duration _breakTimeThreshold = Duration(minutes: 15);
+  static const Duration _locationFreshness = Duration(minutes: 10);
 
   final SharedPreferences preferences;
   final String baseUrl;
@@ -237,6 +238,18 @@ class WifiPollingService {
 
   Future<void> _autoCheckIn() async {
     try {
+      final lastLocationUpdateMs =
+          preferences.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
+      final hasFreshLocation = lastLocationUpdateMs > 0 &&
+          DateTime.now().difference(
+                DateTime.fromMillisecondsSinceEpoch(lastLocationUpdateMs),
+              ) <=
+              _locationFreshness;
+      if (!hasFreshLocation) {
+        log('[WifiPolling] Skipping auto check-in: location fix is stale or unavailable');
+        return;
+      }
+
       final uri = Uri.parse('$baseUrl${Constant.CHECK_IN_URL}');
       final response = await http.post(
         uri,

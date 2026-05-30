@@ -38,6 +38,8 @@ import 'package:provider/provider.dart';
 import 'package:cnattendance/widget/headerprofile.dart';
 import 'package:quick_actions/quick_actions.dart';
 
+const Duration _kAutoCheckInLocationFreshness = Duration(minutes: 10);
+
 class HomeScreen extends StatefulWidget {
   final PersistentTabController controller;
 
@@ -244,6 +246,10 @@ class HomeScreenState extends State<HomeScreen> {
       final sharedPreferences = await SharedPreferences.getInstance();
       await sharedPreferences.setDouble('last_latitude', position.latitude);
       await sharedPreferences.setDouble('last_longitude', position.longitude);
+      await sharedPreferences.setInt(
+        Preferences.WIFI_LAST_LOCATION_UPDATE_MS,
+        DateTime.now().millisecondsSinceEpoch,
+      );
     } catch (e) {
       print(e);
       showToast(e.toString());
@@ -433,7 +439,16 @@ class HomeScreenState extends State<HomeScreen> {
       final cachedLatitude = provider.locationStatus['latitude'] ?? 0.0;
       final cachedLongitude = provider.locationStatus['longitude'] ?? 0.0;
       if (cachedLatitude != 0.0 && cachedLongitude != 0.0) {
-        return (cachedLatitude, cachedLongitude);
+        final sp = await SharedPreferences.getInstance();
+        final lastUpdateMs =
+            sp.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
+        if (lastUpdateMs > 0 &&
+            DateTime.now().difference(
+                  DateTime.fromMillisecondsSinceEpoch(lastUpdateMs),
+                ) <=
+                _kAutoCheckInLocationFreshness) {
+          return (cachedLatitude, cachedLongitude);
+        }
       }
     } catch (_) {}
 
@@ -442,18 +457,17 @@ class HomeScreenState extends State<HomeScreen> {
       final cachedLatitude = sp.getDouble('last_latitude') ?? 0.0;
       final cachedLongitude = sp.getDouble('last_longitude') ?? 0.0;
       if (cachedLatitude != 0.0 && cachedLongitude != 0.0) {
-        return (cachedLatitude, cachedLongitude);
+        final lastUpdateMs =
+            sp.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
+        if (lastUpdateMs > 0 &&
+            DateTime.now().difference(
+                  DateTime.fromMillisecondsSinceEpoch(lastUpdateMs),
+                ) <=
+                _kAutoCheckInLocationFreshness) {
+          return (cachedLatitude, cachedLongitude);
+        }
       }
     } catch (_) {}
-
-    try {
-      final lastKnownPosition = await Geolocator.getLastKnownPosition();
-      if (lastKnownPosition != null) {
-        return (lastKnownPosition.latitude, lastKnownPosition.longitude);
-      }
-    } catch (e) {
-      log('[HomeScreen] Could not read last known location: $e');
-    }
 
     return (0.0, 0.0);
   }
