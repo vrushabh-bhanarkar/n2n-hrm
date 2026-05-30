@@ -82,6 +82,7 @@ class Preferences with ChangeNotifier {
   static const String WIFI_LAST_MATCHED_BSSID = "wifi_last_matched_bssid";
   static const String WIFI_LAST_POLLED_STATUS = "wifi_last_polled_status";
   static const String WIFI_API_BACKOFF_UNTIL_MS = "wifi_api_backoff_until_ms";
+  static const String WIFI_LAST_API_ERROR = "wifi_last_api_error";
 
   Future<bool> saveUser(Login data) async {
     // Obtain shared preferences.

@@ -248,11 +248,31 @@ Future<Map<String, String?>> _postWifiStatus({
 }) async {
   try {
     final uri = Uri.parse('$appUrl${Constant.WIFI_STATUS_URL}');
-    final body = jsonEncode({
+    final prefs = await SharedPreferences.getInstance();
+
+    // Prefer approved (fresh & accurate) location, fall back to last known
+    final approvedLat = prefs.getDouble(Preferences.WIFI_APPROVED_LOCATION_LAT);
+    final approvedLng = prefs.getDouble(Preferences.WIFI_APPROVED_LOCATION_LONG);
+    final lastLat = prefs.getDouble('last_latitude');
+    final lastLng = prefs.getDouble('last_longitude');
+    final timestamp = prefs.getInt(Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS) ??
+        prefs.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS);
+
+    final Map<String, dynamic> payload = {
       'status': status,
       'router_bssid': routerBssid,
       'ssid': currentSsid,
-    });
+    };
+
+    final lat = approvedLat ?? lastLat;
+    final lng = approvedLng ?? lastLng;
+    if (lat != null && lng != null) {
+      payload['latitude'] = lat;
+      payload['longitude'] = lng;
+    }
+    if (timestamp != null && timestamp > 0) payload['timestamp'] = timestamp;
+
+    final body = jsonEncode(payload);
 
     log('[WifiAttendance] 📮 Sending wifi-status to $uri\n   Payload: $body');
     final response = await http
@@ -398,13 +418,47 @@ Future<bool> _autoCheckIn(
   required String appUrl,
 }) async {
   try {
-    if (!await _hasRecentLocationFix(prefs)) {
-      log('[WifiAttendance] ⏭️ Skipping auto check-in: location fix is stale or unavailable');
+    // Prefer an approved fresh location, fall back to last known coords
+    final approvedLat = prefs.getDouble(Preferences.WIFI_APPROVED_LOCATION_LAT);
+    final approvedLng = prefs.getDouble(Preferences.WIFI_APPROVED_LOCATION_LONG);
+    final lastLat = prefs.getDouble('last_latitude');
+    final lastLng = prefs.getDouble('last_longitude');
+
+    final latitude = approvedLat ?? lastLat ?? 0.0;
+    final longitude = approvedLng ?? lastLng ?? 0.0;
+    final lastLocationUpdateMs = prefs.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
+    final approvedUpdateMs = prefs.getInt(Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS) ?? 0;
+
+    // Require both: a matched office BSSID and a fresh location (approved or last-known)
+    final bssid = prefs.getString(Preferences.WIFI_LAST_MATCHED_BSSID) ?? '';
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final hasFreshApprovedLocation = approvedUpdateMs > 0 && (nowMs - approvedUpdateMs) <= _kAutoCheckInLocationFreshness.inMilliseconds;
+    final hasFreshLastLocation = lastLocationUpdateMs > 0 && (nowMs - lastLocationUpdateMs) <= _kAutoCheckInLocationFreshness.inMilliseconds;
+
+    if (bssid.isEmpty) {
+      log('[WifiAttendance] ⏭️ Skipping auto check-in: no matched office BSSID');
       return false;
     }
 
-    log('[WifiAttendance] 🔄 Attempting auto check-in to $appUrl${Constant.CHECK_IN_URL}');
-    final uri = Uri.parse('$appUrl${Constant.CHECK_IN_URL}');
+    if (!(hasFreshApprovedLocation || (latitude != 0.0 && longitude != 0.0 && hasFreshLastLocation))) {
+      log('[WifiAttendance] ⏭️ Skipping auto check-in: no fresh location available (approved=$hasFreshApprovedLocation, last=$hasFreshLastLocation)');
+      return false;
+    }
+    final uri = Uri.parse('$appUrl${Constant.ATTENDANCE_URL}');
+
+    final bodyMap = {
+      'attendance_type': 'wifi',
+      'attendance_status_type': 'checkIn',
+      'router_ssid': prefs.getString(Preferences.WIFI_OFFICE_SSID) ?? '',
+      'router_bssid': bssid,
+      'latitude': latitude,
+      'longitude': longitude,
+      'identifier': '',
+      'note': 'auto wifi checkin',
+      'is_auto': true,
+    };
+
+    log('[WifiAttendance] 🔄 Attempting auto check-in to $uri');
     final response = await http
         .post(
           uri,
@@ -413,11 +467,7 @@ Future<bool> _autoCheckIn(
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
           },
-          body: jsonEncode({
-            'auto_checkin': true,
-            'latitude': prefs.getDouble(Preferences.WIFI_APPROVED_LOCATION_LAT) ?? 0.0,
-            'longitude': prefs.getDouble(Preferences.WIFI_APPROVED_LOCATION_LONG) ?? 0.0,
-          }),
+          body: jsonEncode(bodyMap),
         )
         .timeout(const Duration(seconds: 12));
 
@@ -426,18 +476,15 @@ Future<bool> _autoCheckIn(
       log('[WifiAttendance] ✅ auto check-in success: ${response.statusCode}');
       return true;
     } else {
-      log('[WifiAttendance] ❌ auto check-in failed: ${response.statusCode} - ${response.body}');
+      final message = _extractApiMessage(response.body);
+      await prefs.setString(Preferences.WIFI_LAST_API_ERROR, message);
+      log('[WifiAttendance] ❌ auto check-in failed: ${response.statusCode} - $message');
       return false;
     }
-  } on http.ClientException catch (e) {
-    log('[WifiAttendance] ❌ auto check-in network error: $e');
-  } on TimeoutException {
-    log('[WifiAttendance] ⏱️ auto check-in timeout');
   } catch (e) {
     log('[WifiAttendance] ❌ auto check-in error: $e');
+    return false;
   }
-
-  return false;
 }
 
 bool _shouldAttemptAutoCheckIn(String attendanceStatus) {
@@ -464,8 +511,45 @@ Future<void> _autoCheckOut(
       }
     }
 
-    log('[WifiAttendance] 🔄 Attempting auto check-out to $appUrl${Constant.CHECK_OUT_URL}');
-    final uri = Uri.parse('$appUrl${Constant.CHECK_OUT_URL}');
+    final approvedLat = prefs.getDouble(Preferences.WIFI_APPROVED_LOCATION_LAT);
+    final approvedLng = prefs.getDouble(Preferences.WIFI_APPROVED_LOCATION_LONG);
+    final lastLat = prefs.getDouble('last_latitude');
+    final lastLng = prefs.getDouble('last_longitude');
+    final lastLocationUpdateMs = prefs.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
+    final approvedUpdateMs = prefs.getInt(Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS) ?? 0;
+
+    final latitude = lastLat ?? approvedLat ?? 0.0;
+    final longitude = lastLng ?? approvedLng ?? 0.0;
+
+    final bssid = prefs.getString(Preferences.WIFI_LAST_MATCHED_BSSID) ?? '';
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final hasFreshApprovedLocation = approvedUpdateMs > 0 && (nowMs - approvedUpdateMs) <= _kAutoCheckInLocationFreshness.inMilliseconds;
+    final hasFreshLastLocation = lastLocationUpdateMs > 0 && (nowMs - lastLocationUpdateMs) <= _kAutoCheckInLocationFreshness.inMilliseconds;
+
+    if (bssid.isEmpty) {
+      log('[WifiAttendance] ⏭️ Skipping auto check-out: no matched office BSSID');
+      return;
+    }
+
+    if (!(hasFreshApprovedLocation || (latitude != 0.0 && longitude != 0.0 && hasFreshLastLocation))) {
+      log('[WifiAttendance] ⏭️ Skipping auto check-out: no fresh location available (approved=$hasFreshApprovedLocation, last=$hasFreshLastLocation)');
+      return;
+    }
+
+    final uri = Uri.parse('$appUrl${Constant.ATTENDANCE_URL}');
+    final bodyMap = {
+      'attendance_type': 'wifi',
+      'attendance_status_type': 'checkOut',
+      'router_ssid': prefs.getString(Preferences.WIFI_OFFICE_SSID) ?? '',
+      'router_bssid': bssid,
+      'latitude': latitude,
+      'longitude': longitude,
+      'identifier': '',
+      'note': 'auto wifi checkout',
+      'is_auto': true,
+    };
+
+    log('[WifiAttendance] 🔄 Attempting auto check-out to $uri');
     final response = await http
         .post(
           uri,
@@ -474,12 +558,7 @@ Future<void> _autoCheckOut(
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
           },
-          body: jsonEncode({
-            'auto_checkout': true,
-            'latitude': prefs.getDouble('last_latitude') ?? 0.0,
-            'longitude': prefs.getDouble('last_longitude') ?? 0.0,
-            'break_reason': 'WiFi disconnection exceeded threshold',
-          }),
+          body: jsonEncode(bodyMap),
         )
         .timeout(const Duration(seconds: 12));
 
@@ -491,12 +570,10 @@ Future<void> _autoCheckOut(
       );
       log('[WifiAttendance] ✅ auto check-out success: ${response.statusCode}');
     } else {
-      log('[WifiAttendance] ❌ auto check-out failed: ${response.statusCode} - ${response.body}');
+      final message = _extractApiMessage(response.body);
+      await prefs.setString(Preferences.WIFI_LAST_API_ERROR, message);
+      log('[WifiAttendance] ❌ auto check-out failed: ${response.statusCode} - $message');
     }
-  } on http.ClientException catch (e) {
-    log('[WifiAttendance] ❌ auto check-out network error: $e');
-  } on TimeoutException {
-    log('[WifiAttendance] ⏱️ auto check-out timeout');
   } catch (e) {
     log('[WifiAttendance] ❌ auto check-out error: $e');
   }
@@ -641,6 +718,14 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
                 token: token,
                 appUrl: appUrl,
               );
+            } else {
+              final err = prefs.getString(Preferences.WIFI_LAST_API_ERROR) ?? '';
+              if (err.isNotEmpty && service is AndroidServiceInstance) {
+                service.setForegroundNotificationInfo(
+                  title: 'Attendance Error',
+                  content: err,
+                );
+              }
             }
           } else {
             log('[WifiAttendance] ⏳ Skipping auto check-in retry: waiting for short retry window');
@@ -658,6 +743,13 @@ Future<void> wifiAttendanceServiceMain(ServiceInstance service) async {
           if (disconnectedFor >= const Duration(minutes: 15)) {
             log('[WifiAttendance] ⏱️ 15-minute threshold reached → triggering auto check-out');
             await _autoCheckOut(prefs, token: token, appUrl: appUrl);
+            final err = prefs.getString(Preferences.WIFI_LAST_API_ERROR) ?? '';
+            if (err.isNotEmpty && service is AndroidServiceInstance) {
+              service.setForegroundNotificationInfo(
+                title: 'Attendance Error',
+                content: err,
+              );
+            }
           }
         } else {
           log('[WifiAttendance] ℹ️ Off WiFi but status=$attendanceStatus (not checking out)');

@@ -289,19 +289,32 @@ class WifiPollingService {
       final latitude = position.latitude;
       final longitude = position.longitude;
 
-      final uri = Uri.parse('$baseUrl${Constant.CHECK_IN_URL}');
+      final bssid = preferences.getString(Preferences.WIFI_LAST_MATCHED_BSSID) ?? '';
+      if (bssid.isEmpty) {
+        log('[WifiPolling] ⏭️ Skipping auto check-in: no matched office BSSID');
+        return;
+      }
+
+      final uri = Uri.parse('$baseUrl${Constant.ATTENDANCE_URL}');
+      final bodyMap = {
+        'attendance_type': 'wifi',
+        'attendance_status_type': 'checkIn',
+        'router_ssid': preferences.getString(Preferences.WIFI_OFFICE_SSID) ?? '',
+        'router_bssid': bssid,
+        'latitude': latitude.toString(),
+        'longitude': longitude.toString(),
+        'identifier': '',
+        'note': 'auto wifi checkin',
+        'is_auto': 'true',
+      };
+
       final response = await http.post(
         uri,
         headers: {
           'Accept': 'application/json; charset=UTF-8',
-          'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({
-          'latitude': latitude,
-          'longitude': longitude,
-          'auto_checkin': true,
-        }),
+        body: bodyMap,
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -327,20 +340,44 @@ class WifiPollingService {
         }
       }
 
-      final uri = Uri.parse('$baseUrl${Constant.CHECK_OUT_URL}');
+      final bssid = preferences.getString(Preferences.WIFI_LAST_MATCHED_BSSID) ?? '';
+      final latitude = preferences.getDouble('last_latitude') ?? 0.0;
+      final longitude = preferences.getDouble('last_longitude') ?? 0.0;
+      final lastLocationUpdateMs = preferences.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
+      final approvedUpdateMs = preferences.getInt(Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS) ?? 0;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final hasFreshApprovedLocation = approvedUpdateMs > 0 && (nowMs - approvedUpdateMs) <= _locationFreshness.inMilliseconds;
+      final hasFreshLastLocation = lastLocationUpdateMs > 0 && (nowMs - lastLocationUpdateMs) <= _locationFreshness.inMilliseconds;
+
+      if (bssid.isEmpty) {
+        log('[WifiPolling] ⏭️ Skipping auto check-out: no matched office BSSID');
+        return;
+      }
+
+      if (!(hasFreshApprovedLocation || (latitude != 0.0 && longitude != 0.0 && hasFreshLastLocation))) {
+        log('[WifiPolling] ⏭️ Skipping auto check-out: no fresh location available (approved=$hasFreshApprovedLocation, last=$hasFreshLastLocation)');
+        return;
+      }
+      final uri = Uri.parse('$baseUrl${Constant.ATTENDANCE_URL}');
+      final bodyMap = {
+        'attendance_type': 'wifi',
+        'attendance_status_type': 'checkOut',
+        'router_ssid': preferences.getString(Preferences.WIFI_OFFICE_SSID) ?? '',
+        'router_bssid': bssid,
+        'latitude': latitude.toString(),
+        'longitude': longitude.toString(),
+        'identifier': '',
+        'note': 'auto wifi checkout',
+        'is_auto': 'true',
+      };
+
       final response = await http.post(
         uri,
         headers: {
           'Accept': 'application/json; charset=UTF-8',
-          'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({
-          'latitude': preferences.getDouble('last_latitude') ?? 0.0,
-          'longitude': preferences.getDouble('last_longitude') ?? 0.0,
-          'auto_checkout': true,
-          'break_reason': 'WiFi disconnection exceeded threshold',
-        }),
+        body: bodyMap,
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
@@ -386,6 +423,25 @@ class WifiPollingService {
   }) async {
     try {
       final uri = Uri.parse('$baseUrl${Constant.WIFI_STATUS_URL}');
+      final timestamp = preferences.getInt(Preferences.WIFI_APPROVED_LOCATION_UPDATE_MS) ??
+          preferences.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS);
+      final lat = preferences.getDouble(Preferences.WIFI_APPROVED_LOCATION_LAT) ??
+          preferences.getDouble('last_latitude');
+      final lng = preferences.getDouble(Preferences.WIFI_APPROVED_LOCATION_LONG) ??
+          preferences.getDouble('last_longitude');
+
+      final Map<String, dynamic> payload = {
+        'status': status,
+        'router_bssid': bssid ?? '',
+        'ssid': ssid ?? '',
+      };
+
+      if (lat != null && lng != null) {
+        payload['latitude'] = lat;
+        payload['longitude'] = lng;
+      }
+      if (timestamp != null && timestamp > 0) payload['timestamp'] = timestamp;
+
       final response = await http.post(
         uri,
         headers: {
@@ -393,11 +449,7 @@ class WifiPollingService {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',
         },
-        body: jsonEncode({
-          'status': status,
-          'router_bssid': bssid ?? '',
-          'ssid': ssid ?? '',
-        }),
+        body: jsonEncode(payload),
       ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode != 200) {
