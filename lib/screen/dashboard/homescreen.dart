@@ -74,6 +74,32 @@ class HomeScreenState extends State<HomeScreen> {
     return RegExp(r'^[0-9a-f]{2}(:[0-9a-f]{2}){5}$').hasMatch(value);
   }
 
+  bool _isWithinCheckInWindow(
+    DateTime now,
+    Map<String, int> checkInWindow,
+  ) {
+    final start = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      checkInWindow['startHour'] ?? 8,
+      checkInWindow['startMin'] ?? 0,
+    );
+    var end = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      checkInWindow['endHour'] ?? 11,
+      checkInWindow['endMin'] ?? 0,
+    );
+
+    if (end.isBefore(start)) {
+      end = end.add(const Duration(days: 1));
+    }
+
+    return !now.isBefore(start) && !now.isAfter(end);
+  }
+
   bool _looksLikeHtml(String body) {
     final trimmed = body.trimLeft().toLowerCase();
     return trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html');
@@ -499,7 +525,9 @@ class HomeScreenState extends State<HomeScreen> {
             DateTime.now().difference(
                   DateTime.fromMillisecondsSinceEpoch(lastUpdateMs),
                 ) <=
-                _kAutoCheckInLocationFreshness) {
+                _kAutoCheckInLocationFreshness &&
+            OfficeGeofence.isWithinOfficeRadius(
+                cachedLatitude, cachedLongitude)) {
           return (cachedLatitude, cachedLongitude);
         }
       }
@@ -513,6 +541,12 @@ class HomeScreenState extends State<HomeScreen> {
     try {
       if (await _isWifiApiBackoffActive()) {
         log('[HomeScreen] Skipping auto check-in due to backend backoff');
+        return;
+      }
+
+      final checkInWindow = await Preferences().getWifiCheckinWindow();
+      if (!_isWithinCheckInWindow(DateTime.now(), checkInWindow)) {
+        log('[HomeScreen] Skipping auto check-in outside the configured check-in window');
         return;
       }
 

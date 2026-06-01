@@ -574,13 +574,7 @@ class DashboardProvider with ChangeNotifier {
       locationStatus.update('longitude', (value) => position.longitude);
 
       if (!OfficeGeofence.isAcceptableOfficePosition(position)) {
-        final distanceMeters = OfficeGeofence.distanceFromOfficeMeters(
-          position.latitude,
-          position.longitude,
-        );
-        throw position.accuracy > Constant.OFFICE_LOCATION_MAX_ACCURACY_METERS
-            ? 'Location accuracy is too low (${position.accuracy.toStringAsFixed(0)}m). Move to an open area and try again.'
-            : 'You are outside the office range (${distanceMeters.toStringAsFixed(0)}m away).';
+        log('[DashboardProvider] location is outside office range, but manual check-in will continue with current coordinates');
       }
 
       if (locationStatus['latitude'] != 0.0 &&

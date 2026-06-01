@@ -63,6 +63,12 @@ class WifiPollingService {
       final attendanceStatus = await _getAttendanceStatus();
 
       if (isOfficeWifi && attendanceStatus == 'none') {
+        final checkInWindow = await Preferences().getWifiCheckinWindow();
+        if (!_isWithinCheckInWindow(DateTime.now(), checkInWindow)) {
+          log('[WifiPolling] Skipping auto check-in outside the configured check-in window');
+          return;
+        }
+
         await _autoCheckIn();
       }
 
@@ -89,6 +95,32 @@ class WifiPollingService {
 
   bool _isMacAddress(String value) {
     return RegExp(r'^[0-9a-f]{2}(:[0-9a-f]{2}){5}$').hasMatch(value);
+  }
+
+  bool _isWithinCheckInWindow(
+    DateTime now,
+    Map<String, int> checkInWindow,
+  ) {
+    final start = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      checkInWindow['startHour'] ?? 8,
+      checkInWindow['startMin'] ?? 0,
+    );
+    var end = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      checkInWindow['endHour'] ?? 11,
+      checkInWindow['endMin'] ?? 0,
+    );
+
+    if (end.isBefore(start)) {
+      end = end.add(const Duration(days: 1));
+    }
+
+    return !now.isBefore(start) && !now.isAfter(end);
   }
 
   bool _isRouterActive(dynamic value) {
