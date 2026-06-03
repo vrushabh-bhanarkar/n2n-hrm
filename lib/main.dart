@@ -98,14 +98,6 @@ Future<void> _initializeAwesomeNotifications() async {
 /// Request notification permissions for both platforms
 Future<void> _requestNotificationPermissions() async {
   try {
-    // Request FCM permissions
-    await FirebaseMessaging.instance.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
-
     // Android-specific permission handling
     if (Platform.isAndroid) {
       // Request notification permission only for Android 13+

@@ -90,27 +90,27 @@ class HeaderState extends State<HeaderProfile> {
                       fit: BoxFit.cover,
                       placeholder: (context, url) {
                         return Image.asset(
-                          'assets/images/dummy_avatar.png',
+                          'assets/icons/launcher-icon.png',
                           width: 50,
                           height: 50,
-                          fit: BoxFit.cover,
+                          fit: BoxFit.contain,
                         );
                       },
                       errorWidget: (context, url, error) {
                         // Silently show fallback image without logging
                         return Image.asset(
-                          'assets/images/dummy_avatar.png',
+                          'assets/icons/launcher-icon.png',
                           width: 50,
                           height: 50,
-                          fit: BoxFit.cover,
+                          fit: BoxFit.contain,
                         );
                       },
                     )
                   : Image.asset(
-                      'assets/images/dummy_avatar.png',
+                      'assets/icons/launcher-icon.png',
                       width: 50,
                       height: 50,
-                      fit: BoxFit.cover,
+                      fit: BoxFit.contain,
                     ),
             ),
             Container(
