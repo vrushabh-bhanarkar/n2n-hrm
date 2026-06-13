@@ -92,11 +92,7 @@ class DashboardScreenState extends State<DashboardScreen> {
         resizeToAvoidBottomInset: true,
         // This needs to be true if you want to move up the screen when keyboard appears. Default is true.
         stateManagement: true,
-<<<<<<< HEAD
-        popAllScreensOnTapOfSelectedTab: true,
-        popActionScreens: PopActionScreensType.all,
-=======
->>>>>>> f856942 (Fix dependency conflicts and cleanup)
+
         tabs: [
           PersistentTabConfig(
               screen: HomeScreen(_controller),

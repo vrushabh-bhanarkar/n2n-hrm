@@ -1,9 +1,5 @@
 buildscript {
-<<<<<<< HEAD
-    ext.kotlin_version = '2.1.0'
-=======
     ext.kotlin_version = '2.2.20'
->>>>>>> f856942 (Fix dependency conflicts and cleanup)
     repositories {
         google()
         mavenCentral()

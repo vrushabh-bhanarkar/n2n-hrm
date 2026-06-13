@@ -481,11 +481,7 @@ class loginScreenState extends State<LoginScreen> {
                                           bottomRight: Radius.circular(10))),
                                   suffixIcon: InkWell(
                                     onTap: _toggle,
-<<<<<<< HEAD
-                                    child: Icon(
-=======
                                     child: FaIcon(
->>>>>>> f856942 (Fix dependency conflicts and cleanup)
                                       _obscureText
                                           ? FontAwesomeIcons.eye
                                           : FontAwesomeIcons.eyeSlash,
