@@ -6,6 +6,10 @@ import 'dart:ui';
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/utils/constant.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+<<<<<<< HEAD
+=======
+import 'package:flutter/widgets.dart';
+>>>>>>> f856942 (Fix dependency conflicts and cleanup)
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
 import 'package:network_info_plus/network_info_plus.dart';
@@ -15,8 +19,13 @@ import 'package:http/http.dart' as http;
 /// Background service for WiFi polling that runs even when app is terminated
 class WifiBackgroundService {
   static const String _channelId = 'wifi_attendance_channel';
+<<<<<<< HEAD
   static const String _channelName = 'WiFi Attendance Service';
   static const String _channelDescription = 'Keeps WiFi polling active for automatic attendance';
+=======
+  static const String _authTokenKey = 'user_token';
+  static const String _baseUrlKey = 'app_url';
+>>>>>>> f856942 (Fix dependency conflicts and cleanup)
 
   static final WifiBackgroundService _instance = WifiBackgroundService._internal();
   factory WifiBackgroundService() => _instance;
@@ -71,7 +80,11 @@ class WifiBackgroundService {
   /// Stop the background service
   Future<void> stop() async {
     final service = FlutterBackgroundService();
+<<<<<<< HEAD
     await service.invoke('stop');
+=======
+    service.invoke('stop');
+>>>>>>> f856942 (Fix dependency conflicts and cleanup)
     log('[WifiBackgroundService] Service stop requested');
   }
 
@@ -116,8 +129,13 @@ class WifiBackgroundService {
         // Check if service should be running
         final prefs = await SharedPreferences.getInstance();
         final enabled = prefs.getBool(Preferences.WIFI_AUTO_ENABLED) ?? true;
+<<<<<<< HEAD
         final token = prefs.getString(Preferences.AUTH_TOKEN);
         final baseUrl = prefs.getString(Preferences.BASE_URL);
+=======
+        final token = prefs.getString(_authTokenKey);
+        final baseUrl = prefs.getString(_baseUrlKey);
+>>>>>>> f856942 (Fix dependency conflicts and cleanup)
 
         if (!enabled || token == null || baseUrl == null) {
           log('[WifiBackgroundService] Service disabled or not authenticated, stopping');
@@ -243,8 +261,13 @@ class WifiBackgroundService {
   ) async {
     try {
       // Get fresh baseUrl and token from prefs
+<<<<<<< HEAD
       final freshBaseUrl = prefs.getString(Preferences.BASE_URL);
       final freshToken = prefs.getString(Preferences.AUTH_TOKEN);
+=======
+      final freshBaseUrl = prefs.getString(_baseUrlKey);
+      final freshToken = prefs.getString(_authTokenKey);
+>>>>>>> f856942 (Fix dependency conflicts and cleanup)
       
       if (freshBaseUrl == null || freshToken == null) {
         return [];

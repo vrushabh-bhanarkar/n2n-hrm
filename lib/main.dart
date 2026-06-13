@@ -24,9 +24,13 @@ import 'package:cnattendance/services/realtime_chat_service.dart';
 import 'package:cnattendance/services/notification_service.dart';
 import 'package:cnattendance/services/notification_controller.dart';
 import 'package:cnattendance/services/security_service.dart';
+<<<<<<< HEAD
 import 'package:cnattendance/services/wifi_polling_manager.dart';
 import 'package:cnattendance/services/wifi_background_service.dart';
 import 'package:cnattendance/provider/wifi_attendance_provider.dart';
+=======
+import 'package:cnattendance/services/wifi_background_service.dart';
+>>>>>>> f856942 (Fix dependency conflicts and cleanup)
 import 'package:permission_handler/permission_handler.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -175,8 +179,13 @@ Future<void> _initializeMessagingServices() async {
 
     // Fire and forget - don't wait for these
     unawaited(initializeBackgroundServices());
+<<<<<<< HEAD
     // Start native foreground/background WiFi polling service (Android)
     unawaited(WifiBackgroundService.initialize());
+=======
+    // Initialize background WiFi service plugin configuration
+    unawaited(WifiBackgroundService().initialize());
+>>>>>>> f856942 (Fix dependency conflicts and cleanup)
   } catch (e, stackTrace) {
     if (kDebugMode) {
       debugPrint('❌ Error initializing messaging services: $e');
