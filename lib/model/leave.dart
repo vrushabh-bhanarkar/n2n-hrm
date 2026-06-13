@@ -1,0 +1,27 @@
+import 'package:flutter/material.dart';
+
+class Leave with ChangeNotifier {
+  int id;
+  String name;
+  String allocated;
+  int total;
+  bool status;
+  bool isEarlyLeave;
+
+  Leave(
+      {required this.id,
+      required this.name,
+      required this.allocated,
+      required this.total,
+      required this.status,
+      required this.isEarlyLeave});
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is Leave && other.id == id;
+  }
+
+  @override
+  int get hashCode => id.hashCode;
+}
