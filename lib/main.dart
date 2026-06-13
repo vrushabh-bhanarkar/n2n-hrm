@@ -24,8 +24,8 @@ import 'package:cnattendance/services/realtime_chat_service.dart';
 import 'package:cnattendance/services/notification_service.dart';
 import 'package:cnattendance/services/notification_controller.dart';
 import 'package:cnattendance/services/security_service.dart';
-import 'package:cnattendance/services/wifi_attendance_service.dart';
 import 'package:cnattendance/services/wifi_polling_manager.dart';
+import 'package:cnattendance/services/wifi_background_service.dart';
 import 'package:cnattendance/provider/wifi_attendance_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -104,6 +104,30 @@ Future<void> _requestNotificationPermissions() async {
       if (Platform.version.contains('Android 13')) {
         await Permission.notification.request();
       }
+      
+      // Request location permissions for WiFi polling
+      await [
+        Permission.locationWhenInUse,
+        Permission.locationAlways,
+      ].request();
+      
+      // Request battery optimization exemption for background service
+      final batteryOptimizationStatus = await Permission.ignoreBatteryOptimizations.status;
+      if (!batteryOptimizationStatus.isGranted) {
+        await Permission.ignoreBatteryOptimizations.request();
+      }
+      
+      // Request WiFi state permissions
+      await [
+        Permission.location,
+        Permission.nearbyWifiDevices,
+      ].request();
+    } else if (Platform.isIOS) {
+      // iOS location permissions
+      await [
+        Permission.locationWhenInUse,
+        Permission.locationAlways,
+      ].request();
     }
   } catch (e) {
     if (kDebugMode)
@@ -151,6 +175,8 @@ Future<void> _initializeMessagingServices() async {
 
     // Fire and forget - don't wait for these
     unawaited(initializeBackgroundServices());
+    // Start native foreground/background WiFi polling service (Android)
+    unawaited(WifiBackgroundService.initialize());
   } catch (e, stackTrace) {
     if (kDebugMode) {
       debugPrint('❌ Error initializing messaging services: $e');
@@ -294,13 +320,8 @@ Future<void> main() async {
     // Initialize all messaging and notification services
     await _initializeMessagingServices();
 
-    // Initialize WiFi auto attendance background service.
-    try {
-      await WifiAttendanceService.initialize();
-      if (kDebugMode) debugPrint('✅ WiFi attendance service initialized');
-    } catch (e) {
-      if (kDebugMode) debugPrint('⚠️ WiFi attendance service init failed: $e');
-    }
+    // WiFi attendance: use the polling manager initialized after login/dashboard.
+    if (kDebugMode) debugPrint('ℹ️ WiFiAttendanceService initialization skipped (using WifiPollingManager)');
 
     // Load SSL certificate
     try {

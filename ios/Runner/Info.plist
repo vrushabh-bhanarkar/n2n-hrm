@@ -54,11 +54,18 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>N2N HRM needs your location to verify your attendance check-in and check-out at the workplace.</string>
 	
-	<!-- Background modes for FCM -->
+	<!-- Background modes for FCM and background services -->
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
 		<string>remote-notification</string>
+		<string>processing</string>
 	</array>
+	
+	<!-- Background location permission description -->
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>N2N HRM needs your location to verify your attendance check-in and check-out at the workplace even when the app is in the background.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>N2N HRM needs your location to verify your attendance check-in and check-out at the workplace even when the app is in the background.</string>
 </dict>
 </plist>

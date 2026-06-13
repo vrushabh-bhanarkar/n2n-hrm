@@ -23,6 +23,7 @@ class WifiPollingManager {
   WifiPollingService? _pollingService;
   bool _isRunning = false;
   bool _isPaused = false;
+  final List<void Function()> _statusListeners = [];
 
   bool get isRunning => _isRunning;
   bool get isPaused => _isPaused;
@@ -52,6 +53,13 @@ class WifiPollingManager {
         preferences: prefs,
         baseUrl: baseUrl,
         token: token,
+        onStatusUpdate: () {
+          for (final l in _statusListeners) {
+            try {
+              l();
+            } catch (_) {}
+          }
+        },
       );
 
       _pollingService!.startPolling();
@@ -62,6 +70,14 @@ class WifiPollingManager {
     } catch (e) {
       log('[WifiPolling] Error starting polling service: $e');
     }
+  }
+
+  void addStatusListener(void Function() listener) {
+    _statusListeners.add(listener);
+  }
+
+  void removeStatusListener(void Function() listener) {
+    _statusListeners.remove(listener);
   }
 
   /// Stop WiFi polling service

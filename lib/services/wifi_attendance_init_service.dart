@@ -1,6 +1,7 @@
 import 'dart:developer';
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/services/wifi_polling_manager.dart';
+import 'package:cnattendance/services/wifi_background_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// WiFi Attendance Initialization Service
@@ -45,14 +46,18 @@ class WifiAttendanceInitService {
         return false;
       }
 
-      // Start WiFi polling
+      // Start the background service for continuous WiFi polling
+      await WifiBackgroundService().start();
+      log('[WiFiInit] Background WiFi service started');
+
+      // Also start the polling manager for foreground updates
       await WifiPollingManager().startPolling(
         baseUrl: baseUrl,
         token: token,
       );
 
       _initialized = true;
-      log('[WiFiInit] WiFi polling initialized successfully');
+      log('[WiFiInit] WiFi polling initialized via BackgroundService and WifiPollingManager');
       return true;
     } catch (e) {
       log('[WiFiInit] Error initializing WiFi polling: $e');
@@ -64,6 +69,11 @@ class WifiAttendanceInitService {
   /// Call this when user logs out or app is terminated
   Future<void> cleanupOnLogout() async {
     try {
+      // Stop the background service
+      await WifiBackgroundService().stop();
+      log('[WiFiInit] Background WiFi service stopped');
+      
+      // Stop the polling manager
       await WifiPollingManager().stopPolling();
       _initialized = false;
       log('[WiFiInit] WiFi polling cleaned up on logout');
