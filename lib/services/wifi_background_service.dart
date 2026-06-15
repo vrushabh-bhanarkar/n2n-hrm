@@ -9,6 +9,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
@@ -111,7 +112,41 @@ class WifiBackgroundService {
       service.stopSelf();
     });
 
-    // Main polling loop
+    // Reactive connectivity monitoring - listen for network changes
+    final connectivitySubscription = Connectivity().onConnectivityChanged.listen((List<ConnectivityResult> results) async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final enabled = prefs.getBool(Preferences.WIFI_AUTO_ENABLED) ?? true;
+        final token = prefs.getString(_authTokenKey);
+        final baseUrl = prefs.getString(_baseUrlKey);
+
+        if (!enabled || token == null || baseUrl == null) {
+          log('[WifiBackgroundService] Service disabled or not authenticated, skipping reactive check');
+          return;
+        }
+
+        // Perform immediate check on connectivity change
+        if (results.contains(ConnectivityResult.wifi)) {
+          log('[WifiBackgroundService] WiFi connected - performing immediate check');
+          await _performWifiCheck(prefs, baseUrl, token);
+        } else {
+          log('[WifiBackgroundService] WiFi disconnected - performing immediate check');
+          await _performWifiCheck(prefs, baseUrl, token);
+        }
+
+        // Update notification
+        if (service is AndroidServiceInstance) {
+          await service.setForegroundNotificationInfo(
+            title: 'WiFi Attendance Active',
+            content: results.contains(ConnectivityResult.wifi) ? 'WiFi Connected' : 'WiFi Disconnected',
+          );
+        }
+      } catch (e) {
+        log('[WifiBackgroundService] Error in reactive connectivity monitoring: $e');
+      }
+    });
+
+    // Main polling loop (fallback for missed connectivity events)
     Timer.periodic(const Duration(seconds: 15), (timer) async {
       try {
         // Check if service should be running
@@ -123,6 +158,8 @@ class WifiBackgroundService {
 
         if (!enabled || token == null || baseUrl == null) {
           log('[WifiBackgroundService] Service disabled or not authenticated, stopping');
+          connectivitySubscription.cancel();
+          timer.cancel();
           service.stopSelf();
           return;
         }
@@ -145,7 +182,7 @@ class WifiBackgroundService {
     log('[WifiBackgroundService] Background service started successfully');
   }
 
-  /// Perform WiFi status check
+  /// Perform WiFi status check with location tracking and check-in/check-out logic
   static Future<void> _performWifiCheck(
     SharedPreferences prefs,
     String baseUrl,
@@ -168,16 +205,175 @@ class WifiBackgroundService {
 
       final isOffice = await _isConnectedToOfficeWifi(prefs, currentBssid, currentSsid);
 
-      if (isOffice) {
-        await _postWifiStatus(prefs, baseUrl, token, status: 'connected', bssid: currentBssid, ssid: currentSsid);
-      } else {
+      // Get current location
+      double? latitude;
+      double? longitude;
+      double? accuracy;
+      bool isWithinOfficeGeofence = false;
+
+      try {
+        final position = await _getCurrentLocation();
+        if (position != null) {
+          latitude = position.latitude;
+          longitude = position.longitude;
+          accuracy = position.accuracy;
+
+          // Check if within office geofence
+          final distance = Geolocator.distanceBetween(
+            latitude,
+            longitude,
+            Constant.OFFICE_LATITUDE,
+            Constant.OFFICE_LONGITUDE,
+          );
+          isWithinOfficeGeofence = distance <= Constant.OFFICE_GEOFENCE_RADIUS_METERS;
+
+          log('[WifiBackgroundService] Location: $latitude, $longitude, accuracy: ${accuracy}m, distance to office: ${distance}m');
+        }
+      } catch (e) {
+        log('[WifiBackgroundService] Location error: $e');
+      }
+
+      if (isOffice && isWithinOfficeGeofence) {
+        // Connected to office WiFi and within office geofence - mark check-in
+        await _postWifiStatus(prefs, baseUrl, token, status: 'connected', bssid: currentBssid, ssid: currentSsid, latitude: latitude, longitude: longitude, accuracy: accuracy);
+        await _performCheckIn(prefs, baseUrl, token, latitude, longitude, accuracy);
+      } else if (!isOffice || !isWithinOfficeGeofence) {
         final lastStatus = prefs.getString(Preferences.WIFI_LAST_POLLED_STATUS) ?? 'unknown';
         if (lastStatus == 'connected') {
-          await _postWifiStatus(prefs, baseUrl, token, status: 'disconnected', bssid: '', ssid: currentSsid);
+          // Disconnected from office WiFi or left office geofence - mark check-out
+          await _postWifiStatus(prefs, baseUrl, token, status: 'disconnected', bssid: '', ssid: currentSsid, latitude: latitude, longitude: longitude, accuracy: accuracy);
+          await _performCheckOut(prefs, baseUrl, token, latitude, longitude, accuracy);
         }
       }
     } catch (e) {
       log('[WifiBackgroundService] Error performing WiFi check: $e');
+    }
+  }
+
+  /// Get current device location
+  static Future<Position?> _getCurrentLocation() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        log('[WifiBackgroundService] Location service is disabled');
+        return null;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          log('[WifiBackgroundService] Location permission denied');
+          return null;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        log('[WifiBackgroundService] Location permission denied forever');
+        return null;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+
+      return position;
+    } catch (e) {
+      log('[WifiBackgroundService] Error getting location: $e');
+      return null;
+    }
+  }
+
+  /// Perform check-in API call
+  static Future<void> _performCheckIn(
+    SharedPreferences prefs,
+    String baseUrl,
+    String token,
+    double? latitude,
+    double? longitude,
+    double? accuracy,
+  ) async {
+    try {
+      final lastCheckInTime = prefs.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
+      final now = DateTime.now().millisecondsSinceEpoch;
+
+      // Avoid duplicate check-ins within 5 minutes
+      if (now - lastCheckInTime < 5 * 60 * 1000) {
+        log('[WifiBackgroundService] Check-in already performed recently, skipping');
+        return;
+      }
+
+      final uri = Uri.parse('$baseUrl${Constant.CHECK_IN_URL}');
+      final payload = {
+        'latitude': latitude?.toString() ?? '',
+        'longitude': longitude?.toString() ?? '',
+        'accuracy': accuracy?.toString() ?? '',
+        'is_auto': true,
+        'timestamp': now,
+      };
+
+      final response = await http.post(
+        uri,
+        headers: {
+          'Accept': 'application/json; charset=UTF-8',
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        await prefs.setInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS, now);
+        log('[WifiBackgroundService] Auto check-in successful');
+      } else {
+        // Silent failure logging to avoid system crashes in background execution
+        log('[WifiBackgroundService] Auto check-in failed: ${response.statusCode} - logging silently');
+      }
+    } catch (e) {
+      // Silent failure logging to avoid system crashes in background execution
+      log('[WifiBackgroundService] Check-in error (silent): ${e.toString()}');
+    }
+  }
+
+  /// Perform check-out API call
+  static Future<void> _performCheckOut(
+    SharedPreferences prefs,
+    String baseUrl,
+    String token,
+    double? latitude,
+    double? longitude,
+    double? accuracy,
+  ) async {
+    try {
+      final uri = Uri.parse('$baseUrl${Constant.CHECK_OUT_URL}');
+      final payload = {
+        'latitude': latitude?.toString() ?? '',
+        'longitude': longitude?.toString() ?? '',
+        'accuracy': accuracy?.toString() ?? '',
+        'is_auto': true,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      final response = await http.post(
+        uri,
+        headers: {
+          'Accept': 'application/json; charset=UTF-8',
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        log('[WifiBackgroundService] Auto check-out successful');
+      } else {
+        // Silent failure logging to avoid system crashes in background execution
+        log('[WifiBackgroundService] Auto check-out failed: ${response.statusCode} - logging silently');
+      }
+    } catch (e) {
+      // Silent failure logging to avoid system crashes in background execution
+      log('[WifiBackgroundService] Check-out error (silent): ${e.toString()}');
     }
   }
 
@@ -282,6 +478,9 @@ class WifiBackgroundService {
     required String status,
     required String? bssid,
     required String? ssid,
+    double? latitude,
+    double? longitude,
+    double? accuracy,
   }) async {
     try {
       final uri = Uri.parse('$baseUrl${Constant.WIFI_STATUS_URL}');
@@ -289,6 +488,9 @@ class WifiBackgroundService {
         'status': status,
         'router_bssid': bssid ?? '',
         'ssid': ssid ?? '',
+        'latitude': latitude?.toString() ?? '',
+        'longitude': longitude?.toString() ?? '',
+        'accuracy': accuracy?.toString() ?? '',
         'is_auto': true,
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       };
@@ -305,7 +507,7 @@ class WifiBackgroundService {
 
       if (response.statusCode == 200) {
         await prefs.setString(Preferences.WIFI_LAST_POLLED_STATUS, status);
-        log('[WifiBackgroundService] heartbeat $status posted');
+        log('[WifiBackgroundService] heartbeat $status posted with location: $latitude, $longitude');
       } else {
         log('[WifiBackgroundService] heartbeat post failed: ${response.statusCode}');
       }

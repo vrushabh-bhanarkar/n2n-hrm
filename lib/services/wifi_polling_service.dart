@@ -5,6 +5,7 @@ import 'dart:developer';
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/utils/constant.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
@@ -131,16 +132,46 @@ class WifiPollingService {
 
       final isOffice = await _isConnectedToOfficeWifi(currentBssid, currentSsid);
 
-      if (isOffice) {
+      // Get current location
+      double? latitude;
+      double? longitude;
+      double? accuracy;
+      bool isWithinOfficeGeofence = false;
+
+      try {
+        final position = await _getCurrentLocation();
+        if (position != null) {
+          latitude = position.latitude;
+          longitude = position.longitude;
+          accuracy = position.accuracy;
+
+          // Check if within office geofence
+          final distance = Geolocator.distanceBetween(
+            latitude,
+            longitude,
+            Constant.OFFICE_LATITUDE,
+            Constant.OFFICE_LONGITUDE,
+          );
+          isWithinOfficeGeofence = distance <= Constant.OFFICE_GEOFENCE_RADIUS_METERS;
+
+          log('[WifiPolling] Location: $latitude, $longitude, accuracy: ${accuracy}m, distance to office: ${distance}m');
+        }
+      } catch (e) {
+        log('[WifiPolling] Location error: $e');
+      }
+
+      if (isOffice && isWithinOfficeGeofence) {
         _disconnectCounter = 0;
-        await _postWifiStatus(status: 'connected', bssid: currentBssid, ssid: currentSsid);
+        await _postWifiStatus(status: 'connected', bssid: currentBssid, ssid: currentSsid, latitude: latitude, longitude: longitude, accuracy: accuracy);
+        await _performCheckIn(latitude, longitude, accuracy);
         _lastReportedStatus = 'connected';
       } else {
         if (_lastReportedStatus == 'connected') {
           _disconnectCounter++;
           log('[WifiPolling] debounce missing count=$_disconnectCounter');
           if (_disconnectCounter >= _maxDisconnectRetries) {
-            await _postWifiStatus(status: 'disconnected', bssid: '', ssid: currentSsid);
+            await _postWifiStatus(status: 'disconnected', bssid: '', ssid: currentSsid, latitude: latitude, longitude: longitude, accuracy: accuracy);
+            await _performCheckOut(latitude, longitude, accuracy);
             _lastReportedStatus = 'disconnected';
             _disconnectCounter = 0;
           }
@@ -157,13 +188,125 @@ class WifiPollingService {
     }
   }
 
-  Future<void> _postWifiStatus({required String status, required String? bssid, required String? ssid}) async {
+  /// Get current device location
+  Future<Position?> _getCurrentLocation() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        log('[WifiPolling] Location service is disabled');
+        return null;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          log('[WifiPolling] Location permission denied');
+          return null;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        log('[WifiPolling] Location permission denied forever');
+        return null;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+
+      return position;
+    } catch (e) {
+      log('[WifiPolling] Error getting location: $e');
+      return null;
+    }
+  }
+
+  /// Perform check-in API call
+  Future<void> _performCheckIn(double? latitude, double? longitude, double? accuracy) async {
+    try {
+      final lastCheckInTime = preferences.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
+      final now = DateTime.now().millisecondsSinceEpoch;
+
+      // Avoid duplicate check-ins within 5 minutes
+      if (now - lastCheckInTime < 5 * 60 * 1000) {
+        log('[WifiPolling] Check-in already performed recently, skipping');
+        return;
+      }
+
+      final uri = Uri.parse('$baseUrl${Constant.CHECK_IN_URL}');
+      final payload = {
+        'latitude': latitude?.toString() ?? '',
+        'longitude': longitude?.toString() ?? '',
+        'accuracy': accuracy?.toString() ?? '',
+        'is_auto': true,
+        'timestamp': now,
+      };
+
+      final response = await http.post(
+        uri,
+        headers: {
+          'Accept': 'application/json; charset=UTF-8',
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        await preferences.setInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS, now);
+        log('[WifiPolling] Auto check-in successful');
+      } else {
+        log('[WifiPolling] Auto check-in failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      log('[WifiPolling] Error performing check-in: $e');
+    }
+  }
+
+  /// Perform check-out API call
+  Future<void> _performCheckOut(double? latitude, double? longitude, double? accuracy) async {
+    try {
+      final uri = Uri.parse('$baseUrl${Constant.CHECK_OUT_URL}');
+      final payload = {
+        'latitude': latitude?.toString() ?? '',
+        'longitude': longitude?.toString() ?? '',
+        'accuracy': accuracy?.toString() ?? '',
+        'is_auto': true,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      final response = await http.post(
+        uri,
+        headers: {
+          'Accept': 'application/json; charset=UTF-8',
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        log('[WifiPolling] Auto check-out successful');
+      } else {
+        log('[WifiPolling] Auto check-out failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      log('[WifiPolling] Error performing check-out: $e');
+    }
+  }
+
+  Future<void> _postWifiStatus({required String status, required String? bssid, required String? ssid, double? latitude, double? longitude, double? accuracy}) async {
     try {
       final uri = Uri.parse('$baseUrl${Constant.WIFI_STATUS_URL}');
       final payload = {
         'status': status,
         'router_bssid': bssid ?? '',
         'ssid': ssid ?? '',
+        'latitude': latitude?.toString() ?? '',
+        'longitude': longitude?.toString() ?? '',
+        'accuracy': accuracy?.toString() ?? '',
         'is_auto': true,
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       };
@@ -180,7 +323,7 @@ class WifiPollingService {
 
       if (response.statusCode == 200) {
         await preferences.setString(Preferences.WIFI_LAST_POLLED_STATUS, status);
-        log('[WifiPolling] heartbeat $status posted');
+        log('[WifiPolling] heartbeat $status posted with location: $latitude, $longitude');
       } else {
         log('[WifiPolling] heartbeat post failed: ${response.statusCode}');
       }
