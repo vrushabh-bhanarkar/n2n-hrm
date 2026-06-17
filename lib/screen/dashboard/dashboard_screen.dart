@@ -3,7 +3,9 @@ import 'package:cnattendance/screen/dashboard/homescreen.dart';
 import 'package:cnattendance/screen/dashboard/leavescreen.dart';
 import 'package:cnattendance/screen/dashboard/attendancescreen.dart';
 import 'package:cnattendance/screen/dashboard/morescreen.dart';
-import 'package:cnattendance/services/wifi_attendance_service.dart';
+import 'package:cnattendance/services/wifi_polling_manager.dart';
+import 'package:cnattendance/services/wifi_background_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:cnattendance/utils/constant.dart';
 import 'package:cnattendance/utils/fallback_localization.dart';
 import 'package:flutter/material.dart';
@@ -37,8 +39,24 @@ class DashboardScreenState extends State<DashboardScreen> {
     // Ensure WiFi polling is active after login/dashboard navigation.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _loadAttendanceMethodSafely();
-      await WifiAttendanceService.startService();
-      WifiAttendanceService.forceCheck();
+      try {
+        final sp = await SharedPreferences.getInstance();
+        final token = sp.getString('user_token') ?? '';
+        final appUrl = sp.getString('app_url')?.isNotEmpty == true
+            ? sp.getString('app_url')!
+            : Constant.appUrl;
+        if (token.isNotEmpty) {
+          // Start background service for continuous WiFi polling
+          await WifiBackgroundService().start();
+          debugPrint('✅ Background WiFi polling service started');
+          
+          // Also start the polling manager for foreground updates
+          await WifiPollingManager().startPolling(baseUrl: appUrl, token: token);
+          await WifiPollingManager().forceCheck();
+        }
+      } catch (e) {
+        debugPrint('⚠️ Failed to start WiFi polling: $e');
+      }
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -74,8 +92,7 @@ class DashboardScreenState extends State<DashboardScreen> {
         resizeToAvoidBottomInset: true,
         // This needs to be true if you want to move up the screen when keyboard appears. Default is true.
         stateManagement: true,
-        popAllScreensOnTapOfSelectedTab: true,
-        popActionScreens: PopActionScreensType.all,
+
         tabs: [
           PersistentTabConfig(
               screen: HomeScreen(_controller),

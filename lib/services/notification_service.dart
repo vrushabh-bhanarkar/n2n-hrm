@@ -73,9 +73,6 @@ class NotificationService {
     // Capture launch details so taps from terminated state can be replayed when UI is ready
     await _captureLaunchNotification();
 
-    // Request permissions
-    await _requestPermissions();
-
     // Note: FCMService handles foreground messages to prevent duplicates
     // This service only provides notification display methods
 
@@ -155,17 +152,6 @@ class NotificationService {
 
   static Future<void> _requestPermissions() async {
     print('🔔 Requesting permissions...');
-
-    // FCM permissions
-    NotificationSettings settings =
-        await FirebaseMessaging.instance.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-      provisional: false,
-    );
-
-    print('📱 FCM Permission status: ${settings.authorizationStatus}');
 
     // Android notification channel
     if (Platform.isAndroid) {

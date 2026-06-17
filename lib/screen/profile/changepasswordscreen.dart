@@ -168,7 +168,7 @@ class ChangePasswordState extends State<ChangePassword> {
                         borderRadius: BorderRadius.only(topLeft: Radius.circular(10),topRight: Radius.circular(0),bottomLeft: Radius.circular(0),bottomRight: Radius.circular(10))),
                     suffixIcon: InkWell(
                       onTap: _toggle,
-                      child: Icon(
+                      child: FaIcon(
                         _obscureText
                             ? FontAwesomeIcons.eye
                             : FontAwesomeIcons.eyeSlash,
@@ -215,7 +215,7 @@ class ChangePasswordState extends State<ChangePassword> {
                         borderRadius: BorderRadius.only(topLeft: Radius.circular(10),topRight: Radius.circular(0),bottomLeft: Radius.circular(0),bottomRight: Radius.circular(10))),
                     suffixIcon: InkWell(
                       onTap: _toggle,
-                      child: Icon(
+                      child: FaIcon(
                         _obscureText
                             ? FontAwesomeIcons.eye
                             : FontAwesomeIcons.eyeSlash,
@@ -263,7 +263,7 @@ class ChangePasswordState extends State<ChangePassword> {
                         borderRadius: BorderRadius.only(topLeft: Radius.circular(10),topRight: Radius.circular(0),bottomLeft: Radius.circular(0),bottomRight: Radius.circular(10))),
                     suffixIcon: InkWell(
                       onTap: _toggle,
-                      child: Icon(
+                      child: FaIcon(
                         _obscureText
                             ? FontAwesomeIcons.eye
                             : FontAwesomeIcons.eyeSlash,

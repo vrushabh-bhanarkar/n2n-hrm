@@ -41,6 +41,8 @@ const String _kInternetConnectionMessage =
     'Please check your internet connection';
 const String _kBreakExceededCheckInMessage =
     'Break time is exceeded. Please submit a break extension request before checking in.';
+const String _kAlreadyCheckedInMessage =
+  'You have already checked in today. Only one present is counted per day.';
 
 bool _isNetworkError(Object error) {
   if (error is SocketException ||
@@ -166,6 +168,16 @@ class DashboardProvider with ChangeNotifier {
     // Break approval/extension is authoritative on server-side. Client-side
     // cached values can be stale and incorrectly block a valid check-in.
     return false;
+  }
+
+  bool _hasCheckedInToday() {
+    return (_attendanceList['check-in'] ?? '-').toString() != '-';
+  }
+
+  void _markCheckedInLocally() {
+    final now = DateFormat('hh:mm a').format(DateTime.now());
+    _attendanceList['check-in'] = now;
+    _attendanceList['check-out'] = '-';
   }
 
   final List<double> _weeklyReport = [];
@@ -842,6 +854,10 @@ class DashboardProvider with ChangeNotifier {
 
   Future<AttendanceStatusResponse> checkInAttendance() async {
     try {
+      if (_hasCheckedInToday()) {
+        throw _kAlreadyCheckedInMessage;
+      }
+
       if (_isCheckInBlockedByBreak(explicitStatusType: 'checkIn')) {
         throw _kBreakExceededCheckInMessage;
       }
@@ -883,6 +899,7 @@ class DashboardProvider with ChangeNotifier {
 
         // Fire-and-forget dashboard refresh
         if (status == true) {
+          _markCheckedInLocally();
           Future.microtask(() => getDashboard());
         }
 
@@ -1052,11 +1069,16 @@ class DashboardProvider with ChangeNotifier {
       http.Response response;
 
       if (type == "wifi") {
+        final statusType =
+            attendanceStatus.isEmpty ? 'checkIn' : attendanceStatus;
+
+        if (statusType == 'checkIn' && _hasCheckedInToday()) {
+          throw _kAlreadyCheckedInMessage;
+        }
+
         final appUrl = await preferences.getAppUrl();
         final uri = Uri.parse(appUrl + Constant.ATTENDANCE_URL);
         final wifi = await _resolveAuthorizedWifi(token: token, appUrl: appUrl);
-        final statusType =
-            attendanceStatus.isEmpty ? 'checkIn' : attendanceStatus;
 
         if (_isCheckInBlockedByBreak(explicitStatusType: statusType)) {
           throw _kBreakExceededCheckInMessage;
@@ -1087,6 +1109,9 @@ class DashboardProvider with ChangeNotifier {
 
           // Refresh dashboard to get updated check-in/check-out times
           if (status == true) {
+            if (statusType == 'checkIn') {
+              _markCheckedInLocally();
+            }
             Future.microtask(() async {
               try {
                 await getDashboard();

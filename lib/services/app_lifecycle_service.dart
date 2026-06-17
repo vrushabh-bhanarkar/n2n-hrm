@@ -56,10 +56,9 @@ class AppLifecycleService with WidgetsBindingObserver {
 
   /// Called when app comes to foreground
   void _onAppResumed() {
-    // Resume WiFi polling when app comes to foreground
-    WifiPollingManager().resumePolling().catchError((e) {
-      print('⚠️ Error resuming WiFi polling: $e');
-    });
+    // Background service keeps WiFi polling running even when app is in background
+    // No need to resume/pause - the background service handles it
+    print('✅ App resumed - background WiFi polling continues');
 
     // REMOVED: Global background polling - notifications come from FCM only
     // Stop global background polling when app is in foreground
@@ -72,10 +71,9 @@ class AppLifecycleService with WidgetsBindingObserver {
 
   /// Called when app goes to background
   void _onAppBackgrounded() {
-    // Pause WiFi polling when app goes to background to save battery
-    WifiPollingManager().pausePolling().catchError((e) {
-      print('⚠️ Error pausing WiFi polling: $e');
-    });
+    // Background service keeps WiFi polling running even when app is in background
+    // No need to pause - the background service handles it
+    print('✅ App backgrounded - background WiFi polling continues');
 
     // REMOVED: Global background polling - notifications come from FCM only
     // Start global background polling when app goes to background
