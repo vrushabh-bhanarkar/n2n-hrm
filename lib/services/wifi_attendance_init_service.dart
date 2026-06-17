@@ -1,23 +1,17 @@
 import 'dart:developer';
+
 import 'package:cnattendance/data/source/datastore/preferences.dart';
-import 'package:cnattendance/services/wifi_polling_manager.dart';
 import 'package:cnattendance/services/wifi_background_service.dart';
+import 'package:cnattendance/services/wifi_permissions_helper.dart';
+import 'package:cnattendance/services/wifi_polling_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// WiFi Attendance Initialization Service
-/// 
-/// Handles WiFi polling lifecycle management:
-/// - Initializes WiFi polling after successful login
-/// - Cleans up WiFi polling on logout
-/// - Provides WiFi status and control methods
-
+/// WiFi attendance lifecycle: permissions, foreground polling, and background service.
 class WifiAttendanceInitService {
   static final WifiAttendanceInitService _instance =
       WifiAttendanceInitService._internal();
 
-  factory WifiAttendanceInitService() {
-    return _instance;
-  }
+  factory WifiAttendanceInitService() => _instance;
 
   WifiAttendanceInitService._internal();
 
@@ -25,79 +19,91 @@ class WifiAttendanceInitService {
 
   bool get initialized => _initialized;
 
-  /// Initialize WiFi polling after user login
-  /// Call this from the login screen or dashboard after successful authentication
   Future<bool> initializeForUser({
     required String baseUrl,
     required String token,
   }) async {
     try {
-      if (_initialized) {
-        log('[WiFiInit] Already initialized, skipping');
-        return true;
+      if (token.isEmpty) {
+        log('[WiFiInit] Missing auth token, skipping');
+        return false;
       }
 
-      // Check if WiFi auto-attendance is enabled
       final prefs = await SharedPreferences.getInstance();
-      final enabled = prefs.getBool(Preferences.WIFI_AUTO_ENABLED) ?? true;
 
+      // Enable WiFi auto-attendance by default on first dashboard load after login.
+      if (!prefs.containsKey(Preferences.WIFI_AUTO_ENABLED)) {
+        await prefs.setBool(Preferences.WIFI_AUTO_ENABLED, true);
+      }
+
+      final enabled = prefs.getBool(Preferences.WIFI_AUTO_ENABLED) ?? true;
       if (!enabled) {
         log('[WiFiInit] WiFi auto-attendance is disabled');
         return false;
       }
 
-      // Start the background service for continuous WiFi polling
+      // Ask WiFi/background permissions once (not on every cold start).
+      await WifiPermissionsHelper.requestForWifiAttendanceIfNeeded();
+
+      if (!_initialized) {
+        await WifiBackgroundService().initialize();
+      }
+
+      // Background service keeps polling when app is swiped away (Android + iOS).
       await WifiBackgroundService().start();
       log('[WiFiInit] Background WiFi service started');
 
-      // Also start the polling manager for foreground updates
+      // Foreground polling for UI refresh while app is open.
       await WifiPollingManager().startPolling(
         baseUrl: baseUrl,
         token: token,
       );
+      await WifiPollingManager().forceCheck();
 
       _initialized = true;
-      log('[WiFiInit] WiFi polling initialized via BackgroundService and WifiPollingManager');
+      log('[WiFiInit] WiFi attendance initialized');
       return true;
     } catch (e) {
-      log('[WiFiInit] Error initializing WiFi polling: $e');
+      log('[WiFiInit] Error initializing WiFi attendance: $e');
       return false;
     }
   }
 
-  /// Clean up WiFi polling on logout
-  /// Call this when user logs out or app is terminated
   Future<void> cleanupOnLogout() async {
     try {
-      // Stop the background service
       await WifiBackgroundService().stop();
-      log('[WiFiInit] Background WiFi service stopped');
-      
-      // Stop the polling manager
       await WifiPollingManager().stopPolling();
       _initialized = false;
-      log('[WiFiInit] WiFi polling cleaned up on logout');
+      log('[WiFiInit] WiFi attendance cleaned up on logout');
     } catch (e) {
-      log('[WiFiInit] Error cleaning up WiFi polling: $e');
+      log('[WiFiInit] Error cleaning up WiFi attendance: $e');
     }
   }
 
-  /// Toggle WiFi auto-attendance on/off
   Future<void> toggleWifiAttendance({required bool enabled}) async {
     try {
       await WifiPollingManager().setWifiAttendanceEnabled(enabled);
+
+      if (enabled) {
+        final prefs = await SharedPreferences.getInstance();
+        final token = prefs.getString('user_token') ?? '';
+        final baseUrl = prefs.getString('app_url') ?? '';
+        if (token.isNotEmpty && baseUrl.isNotEmpty) {
+          await initializeForUser(baseUrl: baseUrl, token: token);
+        }
+      } else {
+        await WifiBackgroundService().stop();
+        _initialized = false;
+      }
+
       log('[WiFiInit] WiFi auto-attendance ${enabled ? 'enabled' : 'disabled'}');
     } catch (e) {
       log('[WiFiInit] Error toggling WiFi attendance: $e');
     }
   }
 
-  /// Get WiFi polling status
-  Map<String, dynamic> getStatus() {
-    return WifiPollingManager().getStatus();
-  }
+  Map<String, dynamic> getStatus() => WifiPollingManager().getStatus();
 
-  /// Force immediate WiFi check
   Future<void> forceWifiCheck() async {
     try {
       await WifiPollingManager().forceCheck();
@@ -107,7 +113,6 @@ class WifiAttendanceInitService {
     }
   }
 
-  /// Reset initialization state (for testing or cleanup)
   void reset() {
     _initialized = false;
     log('[WiFiInit] Initialization state reset');

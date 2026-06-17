@@ -43,7 +43,6 @@
     
     <!-- Additional permissions for background service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <uses-permission android:name="android.permission.INTERNET" />
 
@@ -117,7 +116,8 @@
             android:name="id.flutter.flutter_background_service.BackgroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync"
-            tools:replace="android:exported" />
+            android:stopWithTask="false"
+            tools:replace="android:exported,android:stopWithTask" />
             
     </application>
 </manifest>

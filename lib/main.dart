@@ -25,6 +25,7 @@ import 'package:cnattendance/services/notification_service.dart';
 import 'package:cnattendance/services/notification_controller.dart';
 import 'package:cnattendance/services/security_service.dart';
 import 'package:cnattendance/services/wifi_background_service.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -74,17 +75,17 @@ Future<void> _initializeAwesomeNotifications() async {
           playSound: true,
           enableVibration: true,
         ),
-        // TEMP: WiFi auto attendance notifications are disabled.
-        // NotificationChannel(
-        //   channelKey: 'wifi_attendance_channel',
-        //   channelName: 'WiFi Auto Attendance',
-        //   channelDescription: 'Notifications for automatic WiFi-based attendance',
-        //   defaultColor: Color(0xFF4CAF50),
-        //   ledColor: Colors.white,
-        //   importance: NotificationImportance.High,
-        //   playSound: true,
-        //   enableVibration: true,
-        // ),
+        NotificationChannel(
+          channelKey: 'wifi_attendance_channel',
+          channelName: 'WiFi Auto Attendance',
+          channelDescription:
+              'Persistent notification while WiFi attendance monitoring runs',
+          defaultColor: Color(0xFF4CAF50),
+          ledColor: Colors.white,
+          importance: NotificationImportance.Low,
+          playSound: false,
+          enableVibration: false,
+        ),
       ],
     );
   } catch (e) {
@@ -93,62 +94,23 @@ Future<void> _initializeAwesomeNotifications() async {
   }
 }
 
-/// Request notification permissions for both platforms
-/// This function checks if permissions are already granted before requesting to avoid multiple dialogs
+/// Request only notification permissions at startup.
+/// WiFi/location/battery permissions are requested once after login via [WifiPermissionsHelper].
 Future<void> _requestNotificationPermissions() async {
   try {
-    // Android-specific permission handling
     if (Platform.isAndroid) {
-      // Request notification permission only for Android 13+ and if not already granted
-      if (Platform.version.contains('Android 13')) {
+      final androidInfo = await DeviceInfoPlugin().androidInfo;
+      if (androidInfo.version.sdkInt >= 33) {
         final notificationStatus = await Permission.notification.status;
         if (!notificationStatus.isGranted) {
           await Permission.notification.request();
         }
       }
-      
-      // Request location permissions for WiFi polling only if not already granted
-      final locationWhenInUseStatus = await Permission.locationWhenInUse.status;
-      if (!locationWhenInUseStatus.isGranted) {
-        await Permission.locationWhenInUse.request();
-      }
-      
-      final locationAlwaysStatus = await Permission.locationAlways.status;
-      if (!locationAlwaysStatus.isGranted) {
-        await Permission.locationAlways.request();
-      }
-      
-      // Request battery optimization exemption for background service only if not already granted
-      final batteryOptimizationStatus = await Permission.ignoreBatteryOptimizations.status;
-      if (!batteryOptimizationStatus.isGranted) {
-        await Permission.ignoreBatteryOptimizations.request();
-      }
-      
-      // Request WiFi state permissions only if not already granted
-      final locationStatus = await Permission.location.status;
-      if (!locationStatus.isGranted) {
-        await Permission.location.request();
-      }
-      
-      final nearbyWifiStatus = await Permission.nearbyWifiDevices.status;
-      if (!nearbyWifiStatus.isGranted) {
-        await Permission.nearbyWifiDevices.request();
-      }
-    } else if (Platform.isIOS) {
-      // iOS location permissions only if not already granted
-      final locationWhenInUseStatus = await Permission.locationWhenInUse.status;
-      if (!locationWhenInUseStatus.isGranted) {
-        await Permission.locationWhenInUse.request();
-      }
-      
-      final locationAlwaysStatus = await Permission.locationAlways.status;
-      if (!locationAlwaysStatus.isGranted) {
-        await Permission.locationAlways.request();
-      }
     }
   } catch (e) {
-    if (kDebugMode)
+    if (kDebugMode) {
       debugPrint('❌ Error requesting notification permissions: $e');
+    }
   }
 }
 

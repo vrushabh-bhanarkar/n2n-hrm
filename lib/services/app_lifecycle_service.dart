@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:cnattendance/services/local_notification_service.dart';
 import 'package:cnattendance/services/wifi_polling_manager.dart';
-// REMOVED: GlobalMessagePollingService - using FCM only for notifications
 
-/// Service to handle app lifecycle events and background notification management
+/// App lifecycle coordination for WiFi polling.
+/// Android: foreground polling pauses in background (background service continues).
+/// iOS: foreground polling continues (background service supplements with iOS background time).
 class AppLifecycleService with WidgetsBindingObserver {
   static final AppLifecycleService _instance = AppLifecycleService._internal();
   factory AppLifecycleService() => _instance;
@@ -12,7 +15,6 @@ class AppLifecycleService with WidgetsBindingObserver {
   bool _isAppInBackground = false;
   bool _isInitialized = false;
 
-  /// Initialize the lifecycle service
   void initialize() {
     if (!_isInitialized) {
       WidgetsBinding.instance.addObserver(this);
@@ -21,7 +23,6 @@ class AppLifecycleService with WidgetsBindingObserver {
     }
   }
 
-  /// Dispose the lifecycle service
   void dispose() {
     if (_isInitialized) {
       WidgetsBinding.instance.removeObserver(this);
@@ -30,13 +31,12 @@ class AppLifecycleService with WidgetsBindingObserver {
     }
   }
 
-  /// Check if app is currently in background
   bool get isAppInBackground => _isAppInBackground;
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    
+
     switch (state) {
       case AppLifecycleState.resumed:
         _isAppInBackground = false;
@@ -54,53 +54,44 @@ class AppLifecycleService with WidgetsBindingObserver {
     }
   }
 
-  /// Called when app comes to foreground
   void _onAppResumed() {
-    // Background service keeps WiFi polling running even when app is in background
-    // No need to resume/pause - the background service handles it
-    print('✅ App resumed - background WiFi polling continues');
+    print('✅ App resumed — resuming foreground WiFi polling');
 
-    // REMOVED: Global background polling - notifications come from FCM only
-    // Stop global background polling when app is in foreground
-    // GlobalMessagePollingService().stopBackgroundPolling();
+    if (Platform.isAndroid) {
+      WifiPollingManager().resumePolling();
+    }
 
-    // Do NOT auto-clear chat notifications on app resume.
-    // Users expect notifications to remain visible until they interact.
-    // If needed, clear notifications explicitly from chat screens or on notification tap.
+    // Refresh dashboard state after returning from background.
+    WifiPollingManager().forceCheck();
   }
 
-  /// Called when app goes to background
   void _onAppBackgrounded() {
-    // Background service keeps WiFi polling running even when app is in background
-    // No need to pause - the background service handles it
-    print('✅ App backgrounded - background WiFi polling continues');
+    print('✅ App backgrounded — background WiFi service continues');
 
-    // REMOVED: Global background polling - notifications come from FCM only
-    // Start global background polling when app goes to background
-    // GlobalMessagePollingService().startBackgroundPolling();
+    // Avoid duplicate polling: Android background service handles BSSID sync.
+    if (Platform.isAndroid) {
+      WifiPollingManager().pausePolling();
+    }
   }
 
-  /// Clear chat notifications when user returns to app
   Future<void> _clearChatNotifications() async {
     try {
-      // Get all pending notifications
-      final pendingNotifications = await LocalNotificationService.getPendingNotifications();
-      
-      // Cancel chat-related notifications
+      final pendingNotifications =
+          await LocalNotificationService.getPendingNotifications();
+
       for (final notification in pendingNotifications) {
         if (notification.payload?.contains('chat_message') == true ||
             notification.payload?.contains('project_chat_message') == true) {
           await LocalNotificationService.cancelNotification(notification.id);
         }
       }
-      
+
       print('🔔 Cleared ${pendingNotifications.length} chat notifications');
     } catch (e) {
       print('❌ Failed to clear chat notifications: $e');
     }
   }
 
-  /// Show a background notification only if app is in background
   static Future<void> showBackgroundNotificationIfNeeded({
     required int id,
     required String title,
@@ -108,12 +99,11 @@ class AppLifecycleService with WidgetsBindingObserver {
     String? payload,
   }) async {
     final service = AppLifecycleService();
-    
+
     print('🔔 Notification request - App in background: ${service.isAppInBackground}');
     print('🔔 Title: $title');
     print('🔔 Body: $body');
-    
-    // Only show notification if app is in background
+
     if (service.isAppInBackground) {
       await LocalNotificationService.showBackgroundNotification(
         id: id,
@@ -124,11 +114,9 @@ class AppLifecycleService with WidgetsBindingObserver {
       print('🔔 Background notification shown: $title');
     } else {
       print('📱 App in foreground - skipping notification: $title');
-      print('💡 To test notifications, minimize the app and send a message from another device');
     }
   }
 
-  /// Force show notification regardless of app state (for testing)
   static Future<void> forceShowNotification({
     required int id,
     required String title,

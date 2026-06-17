@@ -3,12 +3,11 @@ import 'package:cnattendance/screen/dashboard/homescreen.dart';
 import 'package:cnattendance/screen/dashboard/leavescreen.dart';
 import 'package:cnattendance/screen/dashboard/attendancescreen.dart';
 import 'package:cnattendance/screen/dashboard/morescreen.dart';
-import 'package:cnattendance/services/wifi_polling_manager.dart';
-import 'package:cnattendance/services/wifi_background_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cnattendance/services/wifi_attendance_init_service.dart';
 import 'package:cnattendance/utils/constant.dart';
 import 'package:cnattendance/utils/fallback_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:persistent_bottom_nav_bar_v2/persistent_bottom_nav_bar_v2.dart';
 import 'package:provider/provider.dart';
 import 'package:hexcolor/hexcolor.dart';
@@ -46,13 +45,11 @@ class DashboardScreenState extends State<DashboardScreen> {
             ? sp.getString('app_url')!
             : Constant.appUrl;
         if (token.isNotEmpty) {
-          // Start background service for continuous WiFi polling
-          await WifiBackgroundService().start();
-          debugPrint('✅ Background WiFi polling service started');
-          
-          // Also start the polling manager for foreground updates
-          await WifiPollingManager().startPolling(baseUrl: appUrl, token: token);
-          await WifiPollingManager().forceCheck();
+          await WifiAttendanceInitService().initializeForUser(
+            baseUrl: appUrl,
+            token: token,
+          );
+          debugPrint('✅ WiFi auto-attendance initialized');
         }
       } catch (e) {
         debugPrint('⚠️ Failed to start WiFi polling: $e');

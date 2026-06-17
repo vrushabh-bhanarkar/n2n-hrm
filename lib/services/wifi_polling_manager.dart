@@ -131,10 +131,7 @@ class WifiPollingManager {
     }
 
     try {
-      // Trigger immediate poll by restarting the service
-      _pollingService?.stopPolling();
-      await Future.delayed(Duration(milliseconds: 100));
-      _pollingService?.startPolling();
+      await _pollingService?.forceCheck();
       log('[WifiPolling] Forced immediate WiFi status check');
     } catch (e) {
       log('[WifiPolling] Error forcing WiFi check: $e');
