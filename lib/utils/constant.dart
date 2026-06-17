@@ -5,7 +5,9 @@ import 'package:get_storage/get_storage.dart';
 
 class Constant {
   // default production URL
-  static const production = "https://n2nhrm2.n2nhostings.com";
+  // static const production = "https://n2nhrm2.n2nhostings.com";
+    static const production = "https://accenthrm.n2nhostings.com";
+ 
 
   // Allow overriding MAIN_URL at build time using --dart-define=MAIN_URL=...
   // Example: flutter run -d <device> --dart-define=MAIN_URL=http://192.168.1.42:8000

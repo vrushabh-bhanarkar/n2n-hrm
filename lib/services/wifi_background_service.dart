@@ -4,17 +4,16 @@ import 'dart:developer';
 import 'dart:ui';
 
 import 'package:cnattendance/data/source/datastore/preferences.dart';
-import 'package:cnattendance/utils/constant.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
-import 'package:geolocator/geolocator.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
 
-/// Background service for WiFi polling that runs even when app is terminated
+/// Simplified background service for WiFi polling - only sends BSSID to backend.
+/// Backend handles all verification logic including check-in/check-out marking.
 class WifiBackgroundService {
   static const String _channelId = 'wifi_attendance_channel';
   static const String _authTokenKey = 'user_token';
@@ -93,7 +92,7 @@ class WifiBackgroundService {
 
   /// Service start handler - runs in background isolate
   @pragma('vm:entry-point')
-  static void onStart(ServiceInstance service) async {
+  static Future<void> onStart(ServiceInstance service) async {
     DartPluginRegistrant.ensureInitialized();
 
     // Setup notification for Android
@@ -126,13 +125,7 @@ class WifiBackgroundService {
         }
 
         // Perform immediate check on connectivity change
-        if (results.contains(ConnectivityResult.wifi)) {
-          log('[WifiBackgroundService] WiFi connected - performing immediate check');
-          await _performWifiCheck(prefs, baseUrl, token);
-        } else {
-          log('[WifiBackgroundService] WiFi disconnected - performing immediate check');
-          await _performWifiCheck(prefs, baseUrl, token);
-        }
+        await _performWifiCheck(prefs, baseUrl, token);
 
         // Update notification
         if (service is AndroidServiceInstance) {
@@ -182,318 +175,53 @@ class WifiBackgroundService {
     log('[WifiBackgroundService] Background service started successfully');
   }
 
-  /// Perform WiFi status check with location tracking and check-in/check-out logic
+  /// Perform WiFi status check - only sends BSSID to backend
   static Future<void> _performWifiCheck(
     SharedPreferences prefs,
     String baseUrl,
     String token,
   ) async {
+    print('[WifiBackgroundService] ===== _performWifiCheck called =====');
     try {
-      final connectivityResult = await Connectivity().checkConnectivity();
-      final hasWifi = connectivityResult.contains(ConnectivityResult.wifi);
-
       String currentBssid = '';
-      String currentSsid = '';
-      if (hasWifi) {
-        try {
-          currentBssid = _normalize(await NetworkInfo().getWifiBSSID());
-          currentSsid = _normalize(await NetworkInfo().getWifiName());
-        } catch (e) {
-          log('[WifiBackgroundService] WiFi info read error: $e');
-        }
-      }
-
-      final isOffice = await _isConnectedToOfficeWifi(prefs, currentBssid, currentSsid);
-
-      // Get current location
-      double? latitude;
-      double? longitude;
-      double? accuracy;
-      bool isWithinOfficeGeofence = false;
-
       try {
-        final position = await _getCurrentLocation();
-        if (position != null) {
-          latitude = position.latitude;
-          longitude = position.longitude;
-          accuracy = position.accuracy;
-
-          // Check if within office geofence
-          final distance = Geolocator.distanceBetween(
-            latitude,
-            longitude,
-            Constant.OFFICE_LATITUDE,
-            Constant.OFFICE_LONGITUDE,
-          );
-          isWithinOfficeGeofence = distance <= Constant.OFFICE_GEOFENCE_RADIUS_METERS;
-
-          log('[WifiBackgroundService] Location: $latitude, $longitude, accuracy: ${accuracy}m, distance to office: ${distance}m');
-        }
+        currentBssid = _normalize(await NetworkInfo().getWifiBSSID());
+        print('[WifiBackgroundService] Current BSSID: $currentBssid');
       } catch (e) {
-        log('[WifiBackgroundService] Location error: $e');
+        print('[WifiBackgroundService] WiFi info read error: $e');
       }
 
-      if (isOffice && isWithinOfficeGeofence) {
-        // Connected to office WiFi and within office geofence - mark check-in
-        await _postWifiStatus(prefs, baseUrl, token, status: 'connected', bssid: currentBssid, ssid: currentSsid, latitude: latitude, longitude: longitude, accuracy: accuracy);
-        await _performCheckIn(prefs, baseUrl, token, latitude, longitude, accuracy);
-      } else if (!isOffice || !isWithinOfficeGeofence) {
-        final lastStatus = prefs.getString(Preferences.WIFI_LAST_POLLED_STATUS) ?? 'unknown';
-        if (lastStatus == 'connected') {
-          // Disconnected from office WiFi or left office geofence - mark check-out
-          await _postWifiStatus(prefs, baseUrl, token, status: 'disconnected', bssid: '', ssid: currentSsid, latitude: latitude, longitude: longitude, accuracy: accuracy);
-          await _performCheckOut(prefs, baseUrl, token, latitude, longitude, accuracy);
-        }
-      }
+      // Send BSSID to backend - backend handles verification and check-in/check-out
+      print('[WifiBackgroundService] Calling _postBssidToBackend');
+      await _postBssidToBackend(prefs, baseUrl, token, currentBssid);
     } catch (e) {
-      log('[WifiBackgroundService] Error performing WiFi check: $e');
-    }
-  }
-
-  /// Get current device location
-  static Future<Position?> _getCurrentLocation() async {
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        log('[WifiBackgroundService] Location service is disabled');
-        return null;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          log('[WifiBackgroundService] Location permission denied');
-          return null;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        log('[WifiBackgroundService] Location permission denied forever');
-        return null;
-      }
-
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 10),
-      );
-
-      return position;
-    } catch (e) {
-      log('[WifiBackgroundService] Error getting location: $e');
-      return null;
-    }
-  }
-
-  /// Perform check-in API call
-  static Future<void> _performCheckIn(
-    SharedPreferences prefs,
-    String baseUrl,
-    String token,
-    double? latitude,
-    double? longitude,
-    double? accuracy,
-  ) async {
-    try {
-      final lastCheckInTime = prefs.getInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS) ?? 0;
-      final now = DateTime.now().millisecondsSinceEpoch;
-
-      // Avoid duplicate check-ins within 5 minutes
-      if (now - lastCheckInTime < 5 * 60 * 1000) {
-        log('[WifiBackgroundService] Check-in already performed recently, skipping');
-        return;
-      }
-
-      final uri = Uri.parse('$baseUrl${Constant.CHECK_IN_URL}');
-      final payload = {
-        'latitude': latitude?.toString() ?? '',
-        'longitude': longitude?.toString() ?? '',
-        'accuracy': accuracy?.toString() ?? '',
-        'is_auto': true,
-        'timestamp': now,
-      };
-
-      final response = await http.post(
-        uri,
-        headers: {
-          'Accept': 'application/json; charset=UTF-8',
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode(payload),
-      ).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        await prefs.setInt(Preferences.WIFI_LAST_LOCATION_UPDATE_MS, now);
-        log('[WifiBackgroundService] Auto check-in successful');
-      } else {
-        // Silent failure logging to avoid system crashes in background execution
-        log('[WifiBackgroundService] Auto check-in failed: ${response.statusCode} - logging silently');
-      }
-    } catch (e) {
-      // Silent failure logging to avoid system crashes in background execution
-      log('[WifiBackgroundService] Check-in error (silent): ${e.toString()}');
-    }
-  }
-
-  /// Perform check-out API call
-  static Future<void> _performCheckOut(
-    SharedPreferences prefs,
-    String baseUrl,
-    String token,
-    double? latitude,
-    double? longitude,
-    double? accuracy,
-  ) async {
-    try {
-      final uri = Uri.parse('$baseUrl${Constant.CHECK_OUT_URL}');
-      final payload = {
-        'latitude': latitude?.toString() ?? '',
-        'longitude': longitude?.toString() ?? '',
-        'accuracy': accuracy?.toString() ?? '',
-        'is_auto': true,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
-      };
-
-      final response = await http.post(
-        uri,
-        headers: {
-          'Accept': 'application/json; charset=UTF-8',
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode(payload),
-      ).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        log('[WifiBackgroundService] Auto check-out successful');
-      } else {
-        // Silent failure logging to avoid system crashes in background execution
-        log('[WifiBackgroundService] Auto check-out failed: ${response.statusCode} - logging silently');
-      }
-    } catch (e) {
-      // Silent failure logging to avoid system crashes in background execution
-      log('[WifiBackgroundService] Check-out error (silent): ${e.toString()}');
+      print('[WifiBackgroundService] Error performing WiFi check: $e');
     }
   }
 
   static String _normalize(String? v) => (v ?? '').trim().replaceAll('"', '').toLowerCase();
 
-  static bool _isMac(String v) => RegExp(r'^[0-9a-f]{2}(:[0-9a-f]{2}){5}').hasMatch(v);
-
-  static List<dynamic> _routerCandidates(Map item) => [
-        item['bssid'],
-        item['router_bssid'],
-        item['router_mac'],
-        item['mac'],
-        item['ssid'],
-        item['name']
-      ];
-
-  static Future<bool> _isConnectedToOfficeWifi(
-    SharedPreferences prefs,
-    String bssid,
-    String ssid,
-  ) async {
-    try {
-      final cached = prefs.getString(Preferences.WIFI_SERVER_SSIDS) ?? '';
-      List<dynamic> serverSsids = [];
-      if (cached.isNotEmpty) {
-        try {
-          serverSsids = jsonDecode(cached) as List<dynamic>;
-        } catch (_) {
-          serverSsids = [];
-        }
-      }
-
-      if (serverSsids.isEmpty) {
-        serverSsids = await _fetchServerSsids(prefs, '', '');
-      }
-      if (serverSsids.isEmpty) return false;
-
-      for (final item in serverSsids) {
-        if (item is Map) {
-          final candidates = _routerCandidates(item);
-          for (final candidate in candidates) {
-            final value = _normalize(candidate?.toString());
-            if (value.isEmpty) continue;
-            if (bssid.isNotEmpty && value == bssid) return true;
-            if (!_isMac(value) && ssid.isNotEmpty && value == ssid) return true;
-          }
-        } else {
-          final value = _normalize(item.toString());
-          if (value.isEmpty) continue;
-          if (bssid.isNotEmpty && value == bssid) return true;
-          if (!_isMac(value) && ssid.isNotEmpty && value == ssid) return true;
-        }
-      }
-      return false;
-    } catch (e) {
-      log('[WifiBackgroundService] _isConnectedToOfficeWifi error: $e');
-      return false;
-    }
-  }
-
-  static Future<List<dynamic>> _fetchServerSsids(
+  /// Send BSSID to backend for verification
+  static Future<void> _postBssidToBackend(
     SharedPreferences prefs,
     String baseUrl,
     String token,
+    String bssid,
   ) async {
     try {
-      // Get fresh baseUrl and token from prefs
+      print('[WifiBackgroundService] ===== _postBssidToBackend called =====');
+      print('[WifiBackgroundService] BSSID: $bssid');
+      print('[WifiBackgroundService] Base URL: $baseUrl');
+      print('[WifiBackgroundService] Token: ${token.isNotEmpty ? "present" : "missing"}');
 
-      final freshBaseUrl = prefs.getString(_baseUrlKey);
-      final freshToken = prefs.getString(_authTokenKey);
-      
-      if (freshBaseUrl == null || freshToken == null) {
-        return [];
-      }
-
-      final uri = Uri.parse('$freshBaseUrl${Constant.ROUTER_SSID_URL}');
-      final response = await http.get(uri, headers: {
-        'Accept': 'application/json; charset=UTF-8',
-        'Authorization': 'Bearer $freshToken',
-      }).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode != 200) return [];
-      final payload = jsonDecode(response.body);
-      List<dynamic> filtered = [];
-      if (payload is Map && payload['data'] is List) {
-        filtered = (payload['data'] as List).where((s) => s is Map).toList();
-      } else if (payload is List) {
-        filtered = payload.where((s) => s is Map).toList();
-      }
-      await prefs.setString(Preferences.WIFI_SERVER_SSIDS, jsonEncode(filtered));
-      return filtered;
-    } catch (e) {
-      log('[WifiBackgroundService] _fetchServerSsids error: $e');
-      return [];
-    }
-  }
-
-  static Future<void> _postWifiStatus(
-    SharedPreferences prefs,
-    String baseUrl,
-    String token, {
-    required String status,
-    required String? bssid,
-    required String? ssid,
-    double? latitude,
-    double? longitude,
-    double? accuracy,
-  }) async {
-    try {
-      final uri = Uri.parse('$baseUrl${Constant.WIFI_STATUS_URL}');
+      final uri = Uri.parse('$baseUrl/api/thirdparty/employees/wifi-statusss');
+      // Backend expects a simple body with only the BSSID
       final payload = {
-        'status': status,
-        'router_bssid': bssid ?? '',
-        'ssid': ssid ?? '',
-        'latitude': latitude?.toString() ?? '',
-        'longitude': longitude?.toString() ?? '',
-        'accuracy': accuracy?.toString() ?? '',
-        'is_auto': true,
-        'timestamp': DateTime.now().millisecondsSinceEpoch,
+        'bssid': bssid,
       };
+
+      print('[WifiBackgroundService] Request URL: $uri');
+      print('[WifiBackgroundService] Request payload: ${jsonEncode(payload)}');
 
       final response = await http.post(
         uri,
@@ -505,14 +233,16 @@ class WifiBackgroundService {
         body: jsonEncode(payload),
       ).timeout(const Duration(seconds: 10));
 
+      print('[WifiBackgroundService] Response status: ${response.statusCode}');
+      print('[WifiBackgroundService] Response body: ${response.body}');
+
       if (response.statusCode == 200) {
-        await prefs.setString(Preferences.WIFI_LAST_POLLED_STATUS, status);
-        log('[WifiBackgroundService] heartbeat $status posted with location: $latitude, $longitude');
+        print('[WifiBackgroundService] BSSID sent to backend successfully: $bssid');
       } else {
-        log('[WifiBackgroundService] heartbeat post failed: ${response.statusCode}');
+        print('[WifiBackgroundService] BSSID post failed: ${response.statusCode} - ${response.body}');
       }
     } catch (e) {
-      log('[WifiBackgroundService] _postWifiStatus error: $e');
+      print('[WifiBackgroundService] _postBssidToBackend error: $e');
     }
   }
 }
