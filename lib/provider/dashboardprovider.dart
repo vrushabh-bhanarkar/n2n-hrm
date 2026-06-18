@@ -191,10 +191,6 @@ class DashboardProvider with ChangeNotifier {
   List<BarChartGroupData> rawBarGroups = [];
   List<BarChartGroupData> showingBarGroups = [];
 
-  // WiFi SSID cache for faster attendance check-in
-  List<dynamic> _cachedServerSsids = [];
-  DateTime? _ssidCacheTime;
-  static const Duration _ssidCacheDuration = Duration(minutes: 5);
 
   void buildgraph() {
     const int daysInWeek = 7;
@@ -410,9 +406,6 @@ class DashboardProvider with ChangeNotifier {
 
       checkAD();
       await getFeatures();
-
-      // Pre-cache SSIDs in background for faster check-in
-      _preCacheSsidsInBackground();
 
       return dashboardResponse;
     } else {
@@ -662,127 +655,11 @@ class DashboardProvider with ChangeNotifier {
     return (value ?? '').trim().replaceAll('"', '').toLowerCase();
   }
 
-  /// Pre-cache SSIDs in background for faster check-in
-  void _preCacheSsidsInBackground() {
-    try {
-      // Fire and forget - fetch SSIDs in background without blocking
-      Future(() async {
-        try {
-          Preferences preferences = Preferences();
-          final token = await preferences.getToken();
-          final appUrl = await preferences.getAppUrl();
-          await _fetchServerSsids(token: token, appUrl: appUrl);
-          log('[WiFiAuth] ✅ SSIDs pre-cached in background');
-        } catch (e) {
-          log('[WiFiAuth] Pre-cache failed: $e');
-          // Silently fail - will fetch on demand if needed
-        }
-      });
-    } catch (_) {
-      // Ignore errors in background pre-cache
-    }
-  }
-
   bool _isMacAddress(String value) {
     return RegExp(r'^[0-9a-f]{2}(:[0-9a-f]{2}){5}$').hasMatch(value);
   }
 
-  /// Matches office WiFi and returns the matched BSSID from server, or null if no match
-  String? _findMatchedServerBssid(
-    List<dynamic> serverSsids, {
-    required String? currentBssid,
-    required String? currentSsid,
-  }) {
-    final bssidNorm = _normalizeWifiValue(currentBssid);
-    final ssidNorm = _normalizeWifiValue(currentSsid);
-    if (bssidNorm.isEmpty && ssidNorm.isEmpty) return null;
 
-    for (int i = 0; i < serverSsids.length; i++) {
-      final item = serverSsids[i];
-      if (item is Map) {
-        final candidates = [
-          item['bssid'],
-          item['router_bssid'],
-          item['router_mac'],
-          item['mac'],
-          item['ssid'],
-          item['name'],
-        ];
-
-        for (final candidate in candidates) {
-          final normalizedCandidate =
-              _normalizeWifiValue(candidate?.toString());
-          if (normalizedCandidate.isEmpty) continue;
-
-          if (bssidNorm.isNotEmpty && normalizedCandidate == bssidNorm) {
-            return normalizedCandidate;
-          }
-
-          if (!_isMacAddress(normalizedCandidate) &&
-              ssidNorm.isNotEmpty &&
-              normalizedCandidate == ssidNorm) {
-            return normalizedCandidate;
-          }
-        }
-      }
-    }
-
-    return null;
-  }
-
-  Future<List<dynamic>> _fetchServerSsids({
-    required String token,
-    required String appUrl,
-    bool forceRefresh = false,
-  }) async {
-    // Check if cache is still valid
-    if (!forceRefresh && _cachedServerSsids.isNotEmpty && _ssidCacheTime != null) {
-      final cachAge = DateTime.now().difference(_ssidCacheTime!);
-      if (cachAge < _ssidCacheDuration) {
-        log('[WiFiAuth] ⚡ Cache HIT - reusing ${_cachedServerSsids.length} SSIDs');
-        return _cachedServerSsids;
-      }
-    }
-
-    // Fetch fresh SSID list from server
-    final uri = Uri.parse('$appUrl${Constant.ROUTER_SSID_URL}');
-    log('[WiFiAuth] 🔄 Cache MISS - fetching fresh SSIDs');
-    final response = await TimeoutHttpClient.get(
-      uri,
-      headers: {
-        'Accept': 'application/json; charset=UTF-8',
-        'Authorization': 'Bearer $token',
-      },
-      timeout: const Duration(seconds: 8),
-    );
-
-    log('[WiFiAuth] router-ssid API ${response.statusCode}: ${response.body}');
-
-    if (response.statusCode != 200) {
-      return [];
-    }
-
-    final data = ApiResponseHandler.parseResponse(response);
-    List<dynamic> filtered = [];
-
-    if (data is Map && data['data'] is List) {
-      filtered = (data['data'] as List)
-          .where((s) => s is Map && s['is_active'].toString() == '1')
-          .toList();
-    } else if (data is List) {
-      filtered = data
-          .where((s) => s is Map && s['is_active'].toString() == '1')
-          .toList();
-    }
-
-    log('[WiFiAuth] router-ssid parsed entries: $filtered');
-
-    // Update cache without logging full response
-    _cachedServerSsids = filtered;
-    _ssidCacheTime = DateTime.now();
-
-    return filtered;
-  }
 
   Future<Map<String, String>> _resolveAuthorizedWifi({
     required String token,
@@ -806,49 +683,9 @@ class DashboardProvider with ChangeNotifier {
       throw 'Unable to read current WiFi details. Please reconnect and try again.';
     }
 
-    var serverSsids = await _fetchServerSsids(token: token, appUrl: appUrl);
-    if (serverSsids.isEmpty) {
-      throw 'Could not validate office WiFi at the moment. Please try again.';
-    }
-
-    // Find the matched server BSSID
-    final matchedServerBssid = _findMatchedServerBssid(
-      serverSsids,
-      currentBssid: currentBssid,
-      currentSsid: currentSsid,
-    );
-
-    if (matchedServerBssid == null) {
-      // The cached office WiFi list may be stale when the backend has changed
-      // the router entry. Refresh once from the API before failing.
-      serverSsids = await _fetchServerSsids(
-        token: token,
-        appUrl: appUrl,
-        forceRefresh: true,
-      );
-
-      if (serverSsids.isNotEmpty) {
-        final refreshedMatchedServerBssid = _findMatchedServerBssid(
-          serverSsids,
-          currentBssid: currentBssid,
-          currentSsid: currentSsid,
-        );
-
-        if (refreshedMatchedServerBssid != null) {
-          return {
-            'ssid': refreshedMatchedServerBssid,
-            'bssid': normalizedBssid,
-          };
-        }
-      }
-
-      throw 'WiFi network is not authorized for attendance. Please connect to the correct network.';
-    }
-
     return {
-      'ssid':
-          matchedServerBssid, // Send the matched BSSID from server as router_ssid
-      'bssid': normalizedBssid, // Send the current device BSSID as router_bssid
+      'ssid': normalizedSsid,
+      'bssid': normalizedBssid,
     };
   }
 

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:cnattendance/services/logout_status_service.dart';
-import 'package:cnattendance/services/wifi_attendance_init_service.dart';
+import 'package:cnattendance/services/wifi_background_service.dart';
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/screen/auth/login_screen.dart';
 
@@ -118,7 +118,7 @@ class _LogoutPendingScreenState extends State<LogoutPendingScreen>
 
   Future<void> _performLogout() async {
     try {
-      await WifiAttendanceInitService().cleanupOnLogout();
+      await WifiBackgroundService().stop();
       // Clear local session data
       await Preferences().clearPrefs();
     } catch (e) {

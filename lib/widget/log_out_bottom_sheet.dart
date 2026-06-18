@@ -1,7 +1,7 @@
 import 'package:cnattendance/provider/morescreenprovider.dart';
 import 'package:cnattendance/screen/auth/login_screen.dart';
 import 'package:cnattendance/utils/navigationservice.dart';
-import 'package:cnattendance/services/wifi_attendance_init_service.dart';
+import 'package:cnattendance/services/wifi_background_service.dart';
 import 'package:cnattendance/widget/radialDecoration.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
@@ -44,7 +44,7 @@ class LogOutBottomSheetState extends State<LogOutBottomSheet> {
         );
       } else if (response.statusCode == 200 || response.statusCode == 401) {
         print('✅ Navigating to LOGIN screen');
-        await WifiAttendanceInitService().cleanupOnLogout();
+        await WifiBackgroundService().stop();
         Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
           MaterialPageRoute(
             builder: (BuildContext context) {

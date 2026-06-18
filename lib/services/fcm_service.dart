@@ -12,8 +12,7 @@ import 'package:cnattendance/screens/chat/project_chat_screen.dart';
 // Removed backend service imports to operate without remote backend
 import 'package:cnattendance/model/chat/conversation.dart';
 import 'package:cnattendance/data/source/datastore/preferences.dart';
-import 'package:cnattendance/services/wifi_polling_manager.dart';
-import 'package:cnattendance/services/wifi_attendance_init_service.dart';
+import 'package:cnattendance/services/wifi_background_service.dart';
 
 /// Global variables to track current chat context and message deduplication
 String? _currentChatConversationId;
@@ -343,12 +342,7 @@ class FCMService {
 
     // Break approvals should kick WiFi attendance sync immediately.
     if (_isBreakApprovalNotification(message)) {
-      print('📱 Break approval detected - forcing immediate WiFi attendance check');
-      try {
-        await WifiPollingManager().forceCheck();
-      } catch (e) {
-        print('⚠️ Failed to force WifiPollingManager check: $e');
-      }
+      print('📱 Break approval detected - background WiFi service will sync automatically');
     }
   }
 
@@ -450,8 +444,8 @@ class FCMService {
   static Future<void> _handleLogoutApproved() async {
     try {
       // Stop background WiFi polling service
-      await WifiAttendanceInitService().cleanupOnLogout();
-      
+      await WifiBackgroundService().stop();
+
       await Preferences().clearPrefs();
       Get.offAllNamed('/login');
     } catch (e) {

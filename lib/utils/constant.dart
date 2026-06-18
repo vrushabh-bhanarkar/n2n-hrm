@@ -37,8 +37,8 @@ class Constant {
   static const double OFFICE_LOCATION_MAX_ACCURACY_METERS = 100;
 
   // WiFi Auto Attendance (Router APIs)
-  static const ROUTER_SSID_URL = "/api/router/ssid";
-  static const WIFI_STATUS_URL = "/api/employees/wifi-status";
+  // static const ROUTER_SSID_URL = "/api/router/ssid";
+  // static const WIFI_STATUS_URL = "/api/employees/wifi-status";
   // static const WIFI_AUTO_CHECKIN_URL = "/api/router/wifi-auto-checkin";
   // static const WIFI_AUTO_CHECKOUT_URL = "/api/router/wifi-auto-checkout";
 

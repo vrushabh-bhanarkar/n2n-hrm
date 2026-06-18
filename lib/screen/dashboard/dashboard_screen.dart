@@ -1,13 +1,13 @@
+import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/provider/prefprovider.dart';
 import 'package:cnattendance/screen/dashboard/homescreen.dart';
 import 'package:cnattendance/screen/dashboard/leavescreen.dart';
 import 'package:cnattendance/screen/dashboard/attendancescreen.dart';
 import 'package:cnattendance/screen/dashboard/morescreen.dart';
-import 'package:cnattendance/services/wifi_attendance_init_service.dart';
+import 'package:cnattendance/services/wifi_background_service.dart';
 import 'package:cnattendance/utils/constant.dart';
 import 'package:cnattendance/utils/fallback_localization.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:persistent_bottom_nav_bar_v2/persistent_bottom_nav_bar_v2.dart';
 import 'package:provider/provider.dart';
 import 'package:hexcolor/hexcolor.dart';
@@ -22,41 +22,34 @@ class DashboardScreen extends StatefulWidget {
 class DashboardScreenState extends State<DashboardScreen> {
   bool _hasLoadedUser = false;
 
-  Future<void> _loadAttendanceMethodSafely() async {
-    try {
-      if (!mounted) return;
-      await context.read<PrefProvider>().getAttendanceType();
-    } catch (e) {
-      debugPrint('⚠️ Failed to load attendance method: $e');
-    }
-  }
-
   @override
   void initState() {
     super.initState();
 
-    // Ensure WiFi polling is active after login/dashboard navigation.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _loadAttendanceMethodSafely();
+      // Load attendance method
       try {
-        final sp = await SharedPreferences.getInstance();
-        final token = sp.getString('user_token') ?? '';
-        final appUrl = sp.getString('app_url')?.isNotEmpty == true
-            ? sp.getString('app_url')!
-            : Constant.appUrl;
+        if (mounted) {
+          await context.read<PrefProvider>().getAttendanceType();
+        }
+      } catch (e) {
+        debugPrint('⚠️ Failed to load attendance method: $e');
+      }
+
+      // Initialize WiFi polling
+      try {
+        final preferences = Preferences();
+        final token = await preferences.getToken();
         if (token.isNotEmpty) {
-          await WifiAttendanceInitService().initializeForUser(
-            baseUrl: appUrl,
-            token: token,
-          );
+          await WifiBackgroundService().initialize();
+          await WifiBackgroundService().start();
           debugPrint('✅ WiFi auto-attendance initialized');
         }
       } catch (e) {
         debugPrint('⚠️ Failed to start WiFi polling: $e');
       }
-    });
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Load user data
       if (!_hasLoadedUser && mounted) {
         _hasLoadedUser = true;
         context.read<PrefProvider>().getUser();
@@ -64,9 +57,9 @@ class DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  ItemConfig getItemConfig(Icon icon, String title) {
+  ItemConfig getItemConfig(IconData icon, String title) {
     return ItemConfig(
-      icon: icon,
+      icon: Icon(icon),
       activeColorSecondary: Colors.white,
       activeForegroundColor: Colors.white,
       inactiveBackgroundColor: Colors.white30,
@@ -75,7 +68,7 @@ class DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  PersistentTabController _controller =
+  late final PersistentTabController _controller =
       PersistentTabController(initialIndex: 0);
 
   @override
@@ -85,34 +78,32 @@ class DashboardScreenState extends State<DashboardScreen> {
         controller: _controller,
         backgroundColor: HexColor(getAppTheme() ? radialBoxTheme : "#000000"),
         handleAndroidBackButtonPress: true,
-        // Default is true.
         resizeToAvoidBottomInset: true,
-        // This needs to be true if you want to move up the screen when keyboard appears. Default is true.
         stateManagement: true,
 
         tabs: [
           PersistentTabConfig(
               screen: HomeScreen(_controller),
               item: getItemConfig(
-                Icon(Icons.home_filled),
+                Icons.home_filled,
                 safeTranslate('dashboard_screen.home'),
               )),
           PersistentTabConfig(
               screen: LeaveScreen(),
               item: getItemConfig(
-                Icon(Icons.sick),
+                Icons.sick,
                 safeTranslate('dashboard_screen.leave'),
               )),
           PersistentTabConfig(
               screen: AttendanceScreen(),
               item: getItemConfig(
-                Icon(Icons.co_present_outlined),
+                Icons.co_present_outlined,
                 safeTranslate('dashboard_screen.attendance'),
               )),
           PersistentTabConfig(
               screen: MoreScreen(),
               item: getItemConfig(
-                Icon(Icons.more),
+                Icons.more,
                 safeTranslate('dashboard_screen.more'),
               )),
         ],

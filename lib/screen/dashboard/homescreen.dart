@@ -10,7 +10,6 @@ import 'package:cnattendance/provider/dashboardprovider.dart';
 import 'package:cnattendance/provider/prefprovider.dart';
 // ...existing code...
 import 'package:cnattendance/screen/general/generalscreen.dart';
-import 'package:cnattendance/services/wifi_polling_manager.dart';
 import 'package:cnattendance/utils/constant.dart';
 import 'package:cnattendance/utils/fallback_localization.dart';
 import 'package:cnattendance/utils/locationstatus.dart';
@@ -209,13 +208,11 @@ class HomeScreenState extends State<HomeScreen> {
 
     // Auto WiFi check-in disabled: polling service now sends heartbeats
     // and backend decides check-in/checkout. Do not perform local auto check-ins here.
-    WifiPollingManager().addStatusListener(_onWifiStatusChange);
     super.initState();
   }
 
   @override
   void dispose() {
-    WifiPollingManager().removeStatusListener(_onWifiStatusChange);
     super.dispose();
   }
 

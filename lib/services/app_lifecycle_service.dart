@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:cnattendance/services/local_notification_service.dart';
-import 'package:cnattendance/services/wifi_polling_manager.dart';
 
 /// App lifecycle coordination for WiFi polling.
 /// Android: foreground polling pauses in background (background service continues).
@@ -55,23 +54,11 @@ class AppLifecycleService with WidgetsBindingObserver {
   }
 
   void _onAppResumed() {
-    print('✅ App resumed — resuming foreground WiFi polling');
-
-    if (Platform.isAndroid) {
-      WifiPollingManager().resumePolling();
-    }
-
-    // Refresh dashboard state after returning from background.
-    WifiPollingManager().forceCheck();
+    print('✅ App resumed — background WiFi service continues running');
   }
 
   void _onAppBackgrounded() {
-    print('✅ App backgrounded — background WiFi service continues');
-
-    // Avoid duplicate polling: Android background service handles BSSID sync.
-    if (Platform.isAndroid) {
-      WifiPollingManager().pausePolling();
-    }
+    print('✅ App backgrounded — background WiFi service continues running');
   }
 
   Future<void> _clearChatNotifications() async {
