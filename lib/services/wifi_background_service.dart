@@ -107,7 +107,9 @@ class WifiBackgroundService {
     String baseUrl,
     String token,
   ) async {
-    await WifiBssidSync.postBssidToBackend(baseUrl: baseUrl, token: token);
+    log('[WifiBackgroundService] Performing WiFi check to $baseUrl');
+    final success = await WifiBssidSync.postBssidToBackend(baseUrl: baseUrl, token: token);
+    log('[WifiBackgroundService] WiFi check result: $success');
   }
 
   /// iOS background entry — run one sync when iOS grants background time.
@@ -164,6 +166,7 @@ class WifiBackgroundService {
     }
 
     Future<void> runCheck() async {
+      log('[WifiBackgroundService] Running WiFi check...');
       final prefs = await SharedPreferences.getInstance();
       if (!await _shouldKeepRunning(prefs)) {
         log('[WifiBackgroundService] Not authenticated or disabled, stopping');
@@ -172,6 +175,7 @@ class WifiBackgroundService {
       }
 
       final state = await _readAuthState(prefs);
+      log('[WifiBackgroundService] Auth state - enabled: ${state.enabled}, hasToken: ${state.token != null}, hasBaseUrl: ${state.baseUrl != null}');
       await _performWifiCheck(prefs, state.baseUrl!, state.token!);
     }
 
@@ -179,8 +183,10 @@ class WifiBackgroundService {
       pollingTimer?.cancel();
       onWifi = wifiConnected;
       final interval = wifiConnected ? wifiConnectedInterval : disconnectedInterval;
+      log('[WifiBackgroundService] Scheduling polling every ${interval.inSeconds}s (WiFi connected: $wifiConnected)');
 
       pollingTimer = Timer.periodic(interval, (_) async {
+        log('[WifiBackgroundService] Polling timer triggered');
         await runCheck();
       });
     }
@@ -200,8 +206,17 @@ class WifiBackgroundService {
         Connectivity().onConnectivityChanged.listen((results) async {
       try {
         final wifiConnected = _isWifiConnected(results);
+        log('[WifiBackgroundService] Connectivity changed: $results, WiFi connected: $wifiConnected, was $onWifi');
         if (wifiConnected != onWifi) {
           schedulePolling(wifiConnected);
+          
+          // Only clear cached BSSID when WiFi disconnects, not when it reconnects
+          if (!wifiConnected) {
+            await WifiBssidSync.clearCachedBssid();
+            log('[WifiBackgroundService] WiFi disconnected, cleared cached BSSID');
+          } else {
+            log('[WifiBackgroundService] WiFi reconnected, keeping cached BSSID as fallback');
+          }
         }
 
         await runCheck();
