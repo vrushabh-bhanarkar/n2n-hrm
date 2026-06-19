@@ -1,6 +1,8 @@
 package com.n2nhrm.apk
 
 import android.content.ContentValues
+import android.content.Context
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -11,6 +13,11 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.IOException
 
 class MainActivity : FlutterActivity() {
+
+    companion object {
+        private const val WIFI_CHANNEL = "com.n2nhrm.apk.wifi"
+        private var methodChannel: MethodChannel? = null
+    }
 
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,6 +31,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        android.util.Log.d("MainActivity", "configureFlutterEngine called")
 
         // Security channel for FLAG_SECURE
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "com.n2nhrm.apk.security")
@@ -101,6 +109,43 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // WiFi BSSID reading channel
+        methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, WIFI_CHANNEL)
+        methodChannel?.setMethodCallHandler { call, result ->
+            if (call.method == "getWifiBssid") {
+                try {
+                    val bssid = getWifiBssid(applicationContext)
+                    result.success(bssid)
+                } catch (e: Exception) {
+                    android.util.Log.e("MainActivity", "Error getting BSSID: ${e.message}")
+                    result.error("ERROR", e.message, null)
+                }
+            } else {
+                result.notImplemented()
+            }
+        }
+        android.util.Log.d("MainActivity", "✅ WiFi MethodChannel registered")
+    }
+
+    private fun getWifiBssid(context: Context): String {
+        return try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val wifiInfo = wifiManager.connectionInfo
+            val bssid = wifiInfo.bssid
+            
+            android.util.Log.d("MainActivity", "Native BSSID read: $bssid")
+            
+            if (bssid != null && bssid != "02:00:00:00:00:00" && bssid != "00:00:00:00:00:00") {
+                bssid
+            } else {
+                android.util.Log.w("MainActivity", "Invalid BSSID: $bssid")
+                ""
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Error reading BSSID: ${e.message}")
+            ""
+        }
     }
 
     private fun saveImageToMediaStore(bytes: ByteArray, filename: String, mimeType: String): String? {

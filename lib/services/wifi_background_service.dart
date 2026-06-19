@@ -5,10 +5,12 @@ import 'dart:ui';
 
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/services/wifi_bssid_sync.dart';
+import 'package:cnattendance/services/native_wifi_bssid.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:flutter_background_service_android/flutter_background_service_android.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Background WiFi polling — keeps sending BSSID to backend when app is closed/swiped away.
@@ -60,10 +62,22 @@ class WifiBackgroundService {
     }
 
     final service = FlutterBackgroundService();
+
+    // Always force-restart to ensure latest code is running in the background isolate.
     if (await service.isRunning()) {
-      log('[WifiBackgroundService] Service already running');
-      return;
+      log('[WifiBackgroundService] Stopping stale service before restart...');
+      service.invoke('stop');
+      await Future.delayed(const Duration(seconds: 2));
     }
+
+    // Pre-cache BSSID from foreground so background has a fallback
+    try {
+      final bssid = WifiBssidSync.normalize(await NativeWifiBssid.getWifiBssid());
+      if (WifiBssidSync.isValidBssid(bssid)) {
+        await WifiBssidSync.cacheBssid(bssid);
+        log('[WifiBackgroundService] Pre-cached BSSID from foreground: $bssid');
+      }
+    } catch (_) {}
 
     await service.startService();
     log('[WifiBackgroundService] Service started');
@@ -106,13 +120,87 @@ class WifiBackgroundService {
     SharedPreferences prefs,
     String baseUrl,
     String token,
+    NetworkInfo networkInfo,
   ) async {
     log('[WifiBackgroundService] Performing WiFi check to $baseUrl');
-    final success = await WifiBssidSync.postBssidToBackend(baseUrl: baseUrl, token: token);
+
+    // Read BSSID directly via network_info_plus (registered in background isolate)
+    String? bssid;
+    try {
+      bssid = await networkInfo.getWifiBSSID();
+    } catch (e) {
+      log('[WifiBackgroundService] network_info_plus getWifiBSSID error: $e');
+    }
+
+    final normalizedBssid = WifiBssidSync.normalize(bssid);
+
+    // If live read fails, try cached BSSID
+    String finalBssid = normalizedBssid;
+    if (!WifiBssidSync.isValidBssid(finalBssid)) {
+      log('[WifiBackgroundService] Live BSSID invalid ($normalizedBssid), trying cache...');
+      final cached = await SharedPreferences.getInstance();
+      finalBssid = cached.getString('last_valid_bssid') ?? '';
+      if (WifiBssidSync.isValidBssid(finalBssid)) {
+        log('[WifiBackgroundService] Using cached BSSID: $finalBssid');
+      }
+    } else {
+      // Cache valid live BSSID for future fallback
+      await WifiBssidSync.cacheBssid(finalBssid);
+    }
+
+    if (!WifiBssidSync.isValidBssid(finalBssid)) {
+      log('[WifiBackgroundService] No valid BSSID available, skipping sync');
+      return;
+    }
+
+    final success = await WifiBssidSync.postBssidToBackend(
+      baseUrl: baseUrl,
+      token: token,
+      bssid: finalBssid,
+    );
     log('[WifiBackgroundService] WiFi check result: $success');
   }
 
-  /// iOS background entry — run one sync when iOS grants background time.
+  /// Retry BSSID reading after WiFi reconnection
+  static Future<void> _retryBssidReadAfterReconnect(
+    NetworkInfo networkInfo,
+    AndroidServiceInstance service,
+  ) async {
+    final delays = [
+      const Duration(seconds: 2),
+      const Duration(seconds: 5),
+      const Duration(seconds: 10),
+    ];
+
+    for (var i = 0; i < delays.length; i++) {
+      if (i > 0) {
+        log('[WifiBackgroundService] Retry ${i + 1}/${delays.length}, waiting ${delays[i].inSeconds}s...');
+        await Future.delayed(delays[i]);
+      }
+
+      String? bssid;
+      try {
+        bssid = await networkInfo.getWifiBSSID();
+      } catch (_) {}
+
+      final normalized = WifiBssidSync.normalize(bssid);
+      log('[WifiBackgroundService] Retry ${i + 1}/${delays.length}: BSSID read: "$normalized"');
+
+      if (WifiBssidSync.isValidBssid(normalized)) {
+        await WifiBssidSync.cacheBssid(normalized);
+        log('[WifiBackgroundService] Valid BSSID obtained after retry: $normalized');
+        await service.setForegroundNotificationInfo(
+          title: 'WiFi Attendance Active',
+          content: 'BSSID: $normalized',
+        );
+        return;
+      }
+    }
+
+    log('[WifiBackgroundService] All retries failed, could not obtain valid BSSID');
+  }
+
+  /// iOS background entry
   @pragma('vm:entry-point')
   static Future<bool> onIosBackground(ServiceInstance service) async {
     WidgetsFlutterBinding.ensureInitialized();
@@ -125,7 +213,8 @@ class WifiBackgroundService {
       }
 
       final state = await _readAuthState(prefs);
-      await _performWifiCheck(prefs, state.baseUrl!, state.token!);
+      final networkInfo = NetworkInfo();
+      await _performWifiCheck(prefs, state.baseUrl!, state.token!, networkInfo);
     } catch (e) {
       log('[WifiBackgroundService] iOS background sync error: $e');
     }
@@ -135,7 +224,15 @@ class WifiBackgroundService {
 
   @pragma('vm:entry-point')
   static Future<void> onStart(ServiceInstance service) async {
+    // FIX 1: Re-initialize native plugin channel bindings in the background isolate.
+    // When swiped away, the UI thread dies. This reconnects plugins to platform binaries.
     DartPluginRegistrant.ensureInitialized();
+
+    // FIX 2: Intercept lifecycle shutdown to keep hardware streams alive after swipe.
+    // Android tells the app it's terminating on swipe; this blocks that signal.
+    SystemChannels.lifecycle.setMessageHandler((msg) async => null);
+
+    final NetworkInfo networkInfo = NetworkInfo();
 
     if (service is AndroidServiceInstance) {
       service.on('setAsForeground').listen((_) {
@@ -176,7 +273,19 @@ class WifiBackgroundService {
 
       final state = await _readAuthState(prefs);
       log('[WifiBackgroundService] Auth state - enabled: ${state.enabled}, hasToken: ${state.token != null}, hasBaseUrl: ${state.baseUrl != null}');
-      await _performWifiCheck(prefs, state.baseUrl!, state.token!);
+      await _performWifiCheck(prefs, state.baseUrl!, state.token!, networkInfo);
+
+      // Update notification with live BSSID for visual confirmation
+      if (service is AndroidServiceInstance) {
+        try {
+          final bssid = await networkInfo.getWifiBSSID();
+          final ssid = await networkInfo.getWifiName();
+          await service.setForegroundNotificationInfo(
+            title: 'WiFi Attendance Active',
+            content: 'BSSID: ${bssid ?? 'N/A'} | SSID: ${ssid ?? 'N/A'}',
+          );
+        } catch (_) {}
+      }
     }
 
     void schedulePolling(bool wifiConnected) {
@@ -191,7 +300,7 @@ class WifiBackgroundService {
       });
     }
 
-    // Immediate check when service starts (e.g. after login or app removed from recents).
+    // Immediate check when service starts
     try {
       final initialConnectivity = await Connectivity().checkConnectivity();
       onWifi = _isWifiConnected(initialConnectivity);
@@ -209,13 +318,10 @@ class WifiBackgroundService {
         log('[WifiBackgroundService] Connectivity changed: $results, WiFi connected: $wifiConnected, was $onWifi');
         if (wifiConnected != onWifi) {
           schedulePolling(wifiConnected);
-          
-          // Only clear cached BSSID when WiFi disconnects, not when it reconnects
-          if (!wifiConnected) {
-            await WifiBssidSync.clearCachedBssid();
-            log('[WifiBackgroundService] WiFi disconnected, cleared cached BSSID');
-          } else {
-            log('[WifiBackgroundService] WiFi reconnected, keeping cached BSSID as fallback');
+
+          if (wifiConnected) {
+            log('[WifiBackgroundService] WiFi reconnected, attempting BSSID read with retries...');
+            await _retryBssidReadAfterReconnect(networkInfo, service as AndroidServiceInstance);
           }
         }
 

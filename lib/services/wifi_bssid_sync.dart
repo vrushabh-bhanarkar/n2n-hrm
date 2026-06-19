@@ -1,12 +1,9 @@
 import 'dart:convert';
 import 'dart:developer';
-import 'dart:io';
 
-import 'package:network_info_plus/network_info_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:get_storage/get_storage.dart';
-import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:cnattendance/services/native_wifi_bssid.dart';
 
 /// Shared WiFi BSSID read + backend sync used by foreground and background services.
 class WifiBssidSync {
@@ -27,10 +24,10 @@ class WifiBssidSync {
     return macRegex.hasMatch(bssid);
   }
 
-  static Future<void> _cacheBssid(String bssid) async {
+  static Future<void> cacheBssid(String bssid) async {
     try {
-      final storage = GetStorage();
-      await storage.write(_cachedBssidKey, bssid);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_cachedBssidKey, bssid);
       log('[WifiBssidSync] Cached BSSID persistently: $bssid');
     } catch (e) {
       log('[WifiBssidSync] Failed to cache BSSID: $e');
@@ -39,8 +36,8 @@ class WifiBssidSync {
 
   static Future<String?> _getCachedBssid() async {
     try {
-      final storage = GetStorage();
-      final bssid = storage.read(_cachedBssidKey);
+      final prefs = await SharedPreferences.getInstance();
+      final bssid = prefs.getString(_cachedBssidKey);
       
       if (bssid != null && isValidBssid(bssid)) {
         log('[WifiBssidSync] Using persistent cached BSSID: $bssid');
@@ -54,8 +51,8 @@ class WifiBssidSync {
 
   static Future<void> clearCachedBssid() async {
     try {
-      final storage = GetStorage();
-      await storage.remove(_cachedBssidKey);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_cachedBssidKey);
       log('[WifiBssidSync] Persistent cached BSSID cleared');
     } catch (e) {
       log('[WifiBssidSync] Failed to clear cached BSSID: $e');
@@ -64,51 +61,35 @@ class WifiBssidSync {
 
   static Future<String> readCurrentBssid() async {
     try {
-      final bssid = normalize(await NetworkInfo().getWifiBSSID());
-      log('[WifiBssidSync] Raw BSSID read: "$bssid"');
+      // Read BSSID using network_info_plus (works in both foreground and background)
+      final bssid = normalize(await NativeWifiBssid.getWifiBssid());
+      log('[WifiBssidSync] BSSID read: "$bssid"');
       
       if (isValidBssid(bssid)) {
-        // Check if BSSID changed from cached value
-        final cachedBssid = await _getCachedBssid();
-        if (cachedBssid != null && cachedBssid != bssid) {
-          log('[WifiBssidSync] BSSID changed from $cachedBssid to $bssid, updating cache');
-        }
-        
-        // Cache the valid BSSID persistently for future use
-        await _cacheBssid(bssid);
-        log('[WifiBssidSync] Using current BSSID: $bssid');
+        await cacheBssid(bssid);
+        log('[WifiBssidSync] Using BSSID: $bssid');
         return bssid;
       }
       
-      log('[WifiBssidSync] Invalid BSSID detected: "$bssid", checking WiFi connectivity');
-      
-      // If OS blocked BSSID read (02:00:00:00:00:00), verify if still on WiFi
-      final connectivityResult = await Connectivity().checkConnectivity();
-      final isWifiConnected = connectivityResult.contains(ConnectivityResult.wifi);
-      
-      if (isWifiConnected) {
-        // Use persistent cached BSSID as fallback (no time expiry)
-        final cachedBssid = await _getCachedBssid();
-        if (cachedBssid != null) {
-          log('[WifiBssidSync] OS restricted BSSID. Using persistent fallback: $cachedBssid');
-          return cachedBssid;
-        }
-      } else {
-        log('[WifiBssidSync] WiFi not connected, no fallback available');
+      // If live read fails, try cached BSSID as fallback
+      log('[WifiBssidSync] No valid BSSID from live read, trying cached BSSID');
+      final cachedBssid = await _getCachedBssid();
+      if (cachedBssid != null && isValidBssid(cachedBssid)) {
+        log('[WifiBssidSync] Using cached BSSID as fallback: $cachedBssid');
+        return cachedBssid;
       }
       
       log('[WifiBssidSync] No valid BSSID available');
       return '';
     } catch (e) {
-      log('[WifiBssidSync] Failed to read BSSID: $e, trying cached value');
-      
-      // Try to use cached BSSID as fallback
-      final cachedBssid = await _getCachedBssid();
-      if (cachedBssid != null) {
-        log('[WifiBssidSync] Using cached BSSID: $cachedBssid');
-        return cachedBssid;
-      }
-      
+      log('[WifiBssidSync] Failed to read BSSID: $e');
+      try {
+        final cachedBssid = await _getCachedBssid();
+        if (cachedBssid != null && isValidBssid(cachedBssid)) {
+          log('[WifiBssidSync] Using cached BSSID after error: $cachedBssid');
+          return cachedBssid;
+        }
+      } catch (_) {}
       log('[WifiBssidSync] No valid BSSID available after error');
       return '';
     }
