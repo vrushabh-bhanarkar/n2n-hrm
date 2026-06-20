@@ -5,7 +5,6 @@ import 'dart:ui';
 
 import 'package:cnattendance/data/source/datastore/preferences.dart';
 import 'package:cnattendance/services/wifi_bssid_sync.dart';
-import 'package:cnattendance/services/native_wifi_bssid.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -70,14 +69,7 @@ class WifiBackgroundService {
       await Future.delayed(const Duration(seconds: 2));
     }
 
-    // Pre-cache BSSID from foreground so background has a fallback
-    try {
-      final bssid = WifiBssidSync.normalize(await NativeWifiBssid.getWifiBssid());
-      if (WifiBssidSync.isValidBssid(bssid)) {
-        await WifiBssidSync.cacheBssid(bssid);
-        log('[WifiBackgroundService] Pre-cached BSSID from foreground: $bssid');
-      }
-    } catch (_) {}
+
 
     await service.startService();
     log('[WifiBackgroundService] Service started');
@@ -134,29 +126,17 @@ class WifiBackgroundService {
 
     final normalizedBssid = WifiBssidSync.normalize(bssid);
 
-    // If live read fails, try cached BSSID
-    String finalBssid = normalizedBssid;
-    if (!WifiBssidSync.isValidBssid(finalBssid)) {
-      log('[WifiBackgroundService] Live BSSID invalid ($normalizedBssid), trying cache...');
-      final cached = await SharedPreferences.getInstance();
-      finalBssid = cached.getString('last_valid_bssid') ?? '';
-      if (WifiBssidSync.isValidBssid(finalBssid)) {
-        log('[WifiBackgroundService] Using cached BSSID: $finalBssid');
-      }
-    } else {
-      // Cache valid live BSSID for future fallback
-      await WifiBssidSync.cacheBssid(finalBssid);
-    }
-
-    if (!WifiBssidSync.isValidBssid(finalBssid)) {
-      log('[WifiBackgroundService] No valid BSSID available, skipping sync');
+    if (!WifiBssidSync.isValidBssid(normalizedBssid)) {
+      log('[WifiBackgroundService] No valid live BSSID - WiFi likely disconnected, skipping sync');
       return;
     }
+
+    log('[WifiBackgroundService] Using live BSSID: $normalizedBssid');
 
     final success = await WifiBssidSync.postBssidToBackend(
       baseUrl: baseUrl,
       token: token,
-      bssid: finalBssid,
+      bssid: normalizedBssid,
     );
     log('[WifiBackgroundService] WiFi check result: $success');
   }
@@ -187,7 +167,6 @@ class WifiBackgroundService {
       log('[WifiBackgroundService] Retry ${i + 1}/${delays.length}: BSSID read: "$normalized"');
 
       if (WifiBssidSync.isValidBssid(normalized)) {
-        await WifiBssidSync.cacheBssid(normalized);
         log('[WifiBackgroundService] Valid BSSID obtained after retry: $normalized');
         await service.setForegroundNotificationInfo(
           title: 'WiFi Attendance Active',
@@ -197,7 +176,7 @@ class WifiBackgroundService {
       }
     }
 
-    log('[WifiBackgroundService] All retries failed, could not obtain valid BSSID');
+    log('[WifiBackgroundService] All retries failed, could not obtain valid BSSID from live read');
   }
 
   /// iOS background entry
@@ -291,10 +270,15 @@ class WifiBackgroundService {
     void schedulePolling(bool wifiConnected) {
       pollingTimer?.cancel();
       onWifi = wifiConnected;
-      final interval = wifiConnected ? wifiConnectedInterval : disconnectedInterval;
-      log('[WifiBackgroundService] Scheduling polling every ${interval.inSeconds}s (WiFi connected: $wifiConnected)');
 
-      pollingTimer = Timer.periodic(interval, (_) async {
+      if (!wifiConnected) {
+        log('[WifiBackgroundService] WiFi disconnected, polling paused');
+        return;
+      }
+
+      log('[WifiBackgroundService] Scheduling polling every ${wifiConnectedInterval.inSeconds}s');
+
+      pollingTimer = Timer.periodic(wifiConnectedInterval, (_) async {
         log('[WifiBackgroundService] Polling timer triggered');
         await runCheck();
       });
@@ -316,13 +300,22 @@ class WifiBackgroundService {
       try {
         final wifiConnected = _isWifiConnected(results);
         log('[WifiBackgroundService] Connectivity changed: $results, WiFi connected: $wifiConnected, was $onWifi');
+
+        if (!wifiConnected) {
+          log('[WifiBackgroundService] WiFi disconnected, skipping BSSID sync');
+          if (service is AndroidServiceInstance) {
+            await service.setForegroundNotificationInfo(
+              title: 'WiFi Attendance',
+              content: 'Waiting for WiFi',
+            );
+          }
+          return;
+        }
+
         if (wifiConnected != onWifi) {
           schedulePolling(wifiConnected);
-
-          if (wifiConnected) {
-            log('[WifiBackgroundService] WiFi reconnected, attempting BSSID read with retries...');
-            await _retryBssidReadAfterReconnect(networkInfo, service as AndroidServiceInstance);
-          }
+          log('[WifiBackgroundService] WiFi reconnected, attempting BSSID read with retries...');
+          await _retryBssidReadAfterReconnect(networkInfo, service as AndroidServiceInstance);
         }
 
         await runCheck();
@@ -330,7 +323,7 @@ class WifiBackgroundService {
         if (service is AndroidServiceInstance) {
           await service.setForegroundNotificationInfo(
             title: 'WiFi Attendance Active',
-            content: wifiConnected ? 'WiFi connected' : 'Waiting for WiFi',
+            content: 'WiFi connected',
           );
         }
       } catch (e) {
